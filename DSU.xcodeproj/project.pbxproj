@@ -28,6 +28,16 @@
 			path = DSU;
 			sourceTree = "<group>";
 		};
+		4290A00D2E1A93AF002063AD /* BLE */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BLE;
+			sourceTree = "<group>";
+		};
+		4290A0122E1A96FB002063AD /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -44,6 +54,8 @@
 		42909FBB2E180A2D002063AD = {
 			isa = PBXGroup;
 			children = (
+				4290A0122E1A96FB002063AD /* Shared */,
+				4290A00D2E1A93AF002063AD /* BLE */,
 				42909FC62E180A2D002063AD /* DSU */,
 				42909FC52E180A2D002063AD /* Products */,
 			);
@@ -74,6 +86,8 @@
 			);
 			fileSystemSynchronizedGroups = (
 				42909FC62E180A2D002063AD /* DSU */,
+				4290A00D2E1A93AF002063AD /* BLE */,
+				4290A0122E1A96FB002063AD /* Shared */,
 			);
 			name = DSU;
 			packageProductDependencies = (
@@ -250,6 +264,7 @@
 		42909FCC2E180A2D002063AD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = A6Y36AJNQT;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -261,6 +276,7 @@
 		42909FCD2E180A2D002063AD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = A6Y36AJNQT;
 				ENABLE_HARDENED_RUNTIME = YES;

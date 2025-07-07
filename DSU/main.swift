@@ -1,11 +1,17 @@
-//
-//  main.swift
-//  DSU
-//
-//  Created by Joshua Murphy on 7/4/25.
-//
-
 import Foundation
 
-print("Hello, World!")
+let manager = ControllerManager()
 
+print("Joystick server started.")
+
+Task {
+    let connector = BLEConnector(controllerManager: manager)
+    await connector.startListening()
+}
+
+Task {
+    let server = DSUServer(controllerManager: manager)
+    try? await server.listen()
+}
+
+RunLoop.current.run()
