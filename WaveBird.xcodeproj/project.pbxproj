@@ -20,6 +20,7 @@
 
 /* Begin PBXFileReference section */
 		42909FC42E180A2D002063AD /* WaveBird */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = WaveBird; sourceTree = BUILT_PRODUCTS_DIR; };
+		4290A0342E2448C2002063AD /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -54,6 +55,7 @@
 		42909FBB2E180A2D002063AD = {
 			isa = PBXGroup;
 			children = (
+				4290A0342E2448C2002063AD /* .gitignore */,
 				4290A0122E1A96FB002063AD /* Shared */,
 				4290A00D2E1A93AF002063AD /* BLE */,
 				42909FC62E180A2D002063AD /* DSU */,
