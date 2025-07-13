@@ -19,7 +19,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		42909FC42E180A2D002063AD /* DSU */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = DSU; sourceTree = BUILT_PRODUCTS_DIR; };
+		42909FC42E180A2D002063AD /* WaveBird */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = WaveBird; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -64,7 +64,7 @@
 		42909FC52E180A2D002063AD /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				42909FC42E180A2D002063AD /* DSU */,
+				42909FC42E180A2D002063AD /* WaveBird */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -72,9 +72,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		42909FC32E180A2D002063AD /* DSU */ = {
+		42909FC32E180A2D002063AD /* WaveBird */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 42909FCB2E180A2D002063AD /* Build configuration list for PBXNativeTarget "DSU" */;
+			buildConfigurationList = 42909FCB2E180A2D002063AD /* Build configuration list for PBXNativeTarget "WaveBird" */;
 			buildPhases = (
 				42909FC02E180A2D002063AD /* Sources */,
 				42909FC12E180A2D002063AD /* Frameworks */,
@@ -89,11 +89,11 @@
 				4290A00D2E1A93AF002063AD /* BLE */,
 				4290A0122E1A96FB002063AD /* Shared */,
 			);
-			name = DSU;
+			name = WaveBird;
 			packageProductDependencies = (
 			);
 			productName = DSU;
-			productReference = 42909FC42E180A2D002063AD /* DSU */;
+			productReference = 42909FC42E180A2D002063AD /* WaveBird */;
 			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
@@ -111,7 +111,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 42909FBF2E180A2D002063AD /* Build configuration list for PBXProject "DSU" */;
+			buildConfigurationList = 42909FBF2E180A2D002063AD /* Build configuration list for PBXProject "WaveBird" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -125,7 +125,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				42909FC32E180A2D002063AD /* DSU */,
+				42909FC32E180A2D002063AD /* WaveBird */,
 			);
 		};
 /* End PBXProject section */
@@ -288,7 +288,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		42909FBF2E180A2D002063AD /* Build configuration list for PBXProject "DSU" */ = {
+		42909FBF2E180A2D002063AD /* Build configuration list for PBXProject "WaveBird" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				42909FC92E180A2D002063AD /* Debug */,
@@ -297,7 +297,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		42909FCB2E180A2D002063AD /* Build configuration list for PBXNativeTarget "DSU" */ = {
+		42909FCB2E180A2D002063AD /* Build configuration list for PBXNativeTarget "WaveBird" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				42909FCC2E180A2D002063AD /* Debug */,
