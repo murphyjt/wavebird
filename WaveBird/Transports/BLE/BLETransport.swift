@@ -102,9 +102,11 @@ actor BLETransport: Transport {
         guard let p = peripherals[id.raw], let ch = outputChars[id.raw] else {
             throw BLETransportError.unknownDevice
         }
-        let writeType: CBCharacteristicWriteType =
-            ch.properties.contains(.write) ? .withResponse : .withoutResponse
-        p.writeValue(payload, for: ch, type: writeType)
+        p.writeValue(payload, for: ch, type: writeType(for: ch))
+    }
+
+    private nonisolated func writeType(for ch: CBCharacteristic) -> CBCharacteristicWriteType {
+        ch.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
     }
 
     fileprivate func handleStateUpdate(_ state: CBManagerState) {
@@ -173,14 +175,21 @@ actor BLETransport: Transport {
     fileprivate func handleCharacteristicsDiscovered(peripheral: CBPeripheral, service: CBService) {
         guard let m = matcherByDevice[peripheral.identifier],
               let chars = service.characteristics else { return }
-        if let inputCh = chars.first(where: { $0.uuid == m.inputCharacteristic }) {
-            inputChars[peripheral.identifier] = inputCh
-            peripheral.setNotifyValue(true, for: inputCh)
-        }
+        guard let inputCh = chars.first(where: { $0.uuid == m.inputCharacteristic }) else { return }
+        inputChars[peripheral.identifier] = inputCh
+        peripheral.setNotifyValue(true, for: inputCh)
+
         if let outUUID = m.outputCharacteristic,
            let outCh = chars.first(where: { $0.uuid == outUUID }) {
             outputChars[peripheral.identifier] = outCh
+            let type = writeType(for: outCh)
+            for cmd in m.initCommands {
+                peripheral.writeValue(cmd, for: outCh, type: type)
+            }
         }
+
+        let id = DeviceID(transport: .ble, raw: peripheral.identifier)
+        continuation.yield(.ready(id))
     }
 
     fileprivate func handleNotification(peripheral: CBPeripheral, characteristic: CBCharacteristic) {

@@ -92,7 +92,7 @@ struct ContentView: View {
                 }
             }
             Spacer()
-            if record.connectionState == .connected, record.reportRate > 0 {
+            if record.connectionState == .ready, record.reportRate > 0 {
                 Text("\(Int(record.reportRate)) Hz")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -142,7 +142,7 @@ struct ContentView: View {
         switch s {
         case .discovered: "Discovered"
         case .connecting: "Connecting…"
-        case .connected: "Connected"
+        case .connected, .ready: "Connected"
         case .disconnected: "Disconnected"
         case .failed(let msg): "Failed: \(msg)"
         }
@@ -150,7 +150,7 @@ struct ContentView: View {
 
     private func stateColor(_ s: DeviceConnectionState) -> Color {
         switch s {
-        case .connected: .green
+        case .connected, .ready: .green
         case .connecting, .discovered: .orange
         case .disconnected: .secondary
         case .failed: .red

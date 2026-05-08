@@ -6,6 +6,7 @@ enum DeviceConnectionState: Sendable, Equatable {
     case discovered
     case connecting
     case connected
+    case ready
     case disconnected
     case failed(String)
 }
@@ -103,7 +104,7 @@ final class BridgeCoordinator {
             if let existing = devices[id] {
                 // Re-discovery: only re-attempt connect if not already in flight.
                 switch existing.connectionState {
-                case .connected, .connecting, .discovered: return
+                case .connected, .connecting, .discovered, .ready: return
                 case .disconnected, .failed: break
                 }
                 devices[id]?.connectionState = .discovered
@@ -130,6 +131,9 @@ final class BridgeCoordinator {
 
         case .connected(let id):
             devices[id]?.connectionState = .connected
+
+        case .ready(let id):
+            devices[id]?.connectionState = .ready
             guard let profile = devices[id]?.profile else { return }
             if let vhid = VirtualHIDDevice(
                 descriptor: profile.hidDescriptor,

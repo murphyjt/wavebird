@@ -9,7 +9,13 @@ struct NS2GameCubeProfile: ControllerProfile {
             productID: 0x2073,
             serviceUUID: CBUUID(string: "AB7DE9BE-89FE-49AD-828F-118F09DF7FD0"),
             inputCharacteristic: CBUUID(string: "AB7DE9BE-89FE-49AD-828F-118F09DF7FD2"),
-            outputCharacteristic: nil
+            outputCharacteristic: CBUUID(string: "649D4AC9-8EB7-4E6C-AF44-1EA54FE5F005"),
+            initCommands: [
+                Data([
+                    0x09, 0x91, 0x01, 0x07, 0x00, 0x08, 0x00, 0x00,
+                    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                ]),
+            ]
         )
     }
 
