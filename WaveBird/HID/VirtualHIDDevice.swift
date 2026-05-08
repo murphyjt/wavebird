@@ -18,7 +18,7 @@ nonisolated final class VirtualHIDDevice: Sendable {
             productID: UInt32(productID),
             transport: transport,
             product: productName,
-            manufacturer: "WaveBird"
+            manufacturer: "Nintendo"
         )
         guard let device = HIDVirtualDevice(properties: properties) else { return nil }
         self.device = device

@@ -8,9 +8,15 @@ struct WaveBirdApp: App {
     )
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("WaveBird") {
             ContentView(coordinator: coordinator)
-                .task { await coordinator.start() }
+                .task {
+                    await coordinator.start()
+                    if !coordinator.isScanning {
+                        await coordinator.toggleScan()
+                    }
+                }
         }
+        .windowResizability(.contentSize)
     }
 }

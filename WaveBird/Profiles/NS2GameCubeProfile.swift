@@ -2,7 +2,7 @@
 import Foundation
 
 nonisolated struct NS2GameCubeProfile: ControllerProfile {
-    let name = "NS2 GameCube Controller"
+    let name = "Nintendo GameCube Controller"
 
     var bleMatcher: BLEMatcher? {
         BLEMatcher(
