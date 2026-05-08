@@ -19,6 +19,7 @@ struct DeviceRecord: Identifiable {
     var reportRate: Double = 0
 }
 
+@MainActor
 @Observable
 final class BridgeCoordinator {
     let profiles: [any ControllerProfile]

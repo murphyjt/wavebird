@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct ButtonSet: OptionSet, Sendable, Hashable {
+struct ButtonSet: OptionSet, Sendable, Hashable {
     let rawValue: UInt32
     init(rawValue: UInt32) { self.rawValue = rawValue }
 
@@ -29,7 +29,7 @@ nonisolated struct ButtonSet: OptionSet, Sendable, Hashable {
     static let sr        = ButtonSet(rawValue: 1 << 22)
 }
 
-nonisolated struct IMUSample: Sendable, Hashable {
+struct IMUSample: Sendable, Hashable {
     var accelX: Int16
     var accelY: Int16
     var accelZ: Int16
@@ -38,7 +38,7 @@ nonisolated struct IMUSample: Sendable, Hashable {
     var gyroZ:  Int16
 }
 
-nonisolated struct ControllerState: Sendable {
+struct ControllerState: Sendable {
     var leftStick:  SIMD2<Int8>
     var rightStick: SIMD2<Int8>
     var triggerL:   UInt8

@@ -1,7 +1,7 @@
 @preconcurrency import CoreBluetooth
 import Foundation
 
-nonisolated enum BLETransportError: Error {
+enum BLETransportError: Error {
     case wrongTransport
     case unknownDevice
 }
@@ -192,7 +192,7 @@ actor BLETransport: Transport {
     }
 }
 
-private nonisolated final class BLEDelegate: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
+private final class BLEDelegate: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
     weak var transport: BLETransport?
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {

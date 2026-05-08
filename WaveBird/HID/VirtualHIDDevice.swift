@@ -1,7 +1,7 @@
 import CoreHID
 import Foundation
 
-nonisolated final class VirtualHIDDevice: Sendable {
+final class VirtualHIDDevice: Sendable {
     let device: HIDVirtualDevice
     private let delegate: Delegate
 
@@ -52,7 +52,7 @@ nonisolated final class VirtualHIDDevice: Sendable {
     }
 }
 
-nonisolated extension VirtualHIDDevice {
+extension VirtualHIDDevice {
     static let placeholderGamepadDescriptor: Data = Data([
         0x05, 0x01,        // Usage Page (Generic Desktop)
         0x09, 0x05,        // Usage (Game Pad)

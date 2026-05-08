@@ -1,11 +1,11 @@
 import Foundation
 
-nonisolated enum TransportKind: Sendable, Hashable {
+enum TransportKind: Sendable, Hashable {
     case ble
     case usb
 }
 
-nonisolated struct DeviceID: Sendable, Hashable {
+struct DeviceID: Sendable, Hashable {
     let transport: TransportKind
     let raw: UUID
 

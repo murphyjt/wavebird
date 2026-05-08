@@ -1,13 +1,13 @@
 import Foundation
 
-nonisolated struct AdvertisementInfo: Sendable {
+struct AdvertisementInfo: Sendable {
     let vendorID: UInt16
     let productID: UInt16
     let localName: String?
     let rssi: Int?
 }
 
-nonisolated enum DisconnectReason: Sendable {
+enum DisconnectReason: Sendable {
     case userInitiated
     case timeout
     case linkLoss
@@ -15,7 +15,7 @@ nonisolated enum DisconnectReason: Sendable {
     case unknown
 }
 
-nonisolated enum TransportEvent: Sendable {
+enum TransportEvent: Sendable {
     case discovered(DeviceID, AdvertisementInfo)
     case connecting(DeviceID)
     case connected(DeviceID)

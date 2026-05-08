@@ -1,7 +1,7 @@
 @preconcurrency import CoreBluetooth
 import Foundation
 
-nonisolated struct NS2GameCubeProfile: ControllerProfile {
+struct NS2GameCubeProfile: ControllerProfile {
     let name = "Nintendo GameCube Controller"
 
     var bleMatcher: BLEMatcher? {
