@@ -1,12 +1,13 @@
 name: Release
 
 # Required repository secrets:
-#   APPLE_CERTIFICATE_P12_BASE64    — Developer ID Application cert (.p12) base64-encoded
-#   APPLE_CERTIFICATE_PASSWORD      — password used when exporting the p12
-#   APPLE_TEAM_ID                   — 10-char team ID from developer.apple.com
-#   APPLE_ID                        — Apple ID email used for notarization
-#   APPLE_APP_SPECIFIC_PASSWORD     — app-specific password from appleid.apple.com
-#   KEYCHAIN_PASSWORD               — any string; gates the temporary keychain
+#   APPLE_CERTIFICATE_P12_BASE64       — Developer ID Application cert (.p12) base64-encoded
+#   APPLE_CERTIFICATE_PASSWORD         — password used when exporting the p12
+#   APPLE_PROVISIONING_PROFILE_BASE64  — Developer ID provisioning profile, base64-encoded
+#   APPLE_TEAM_ID                      — 10-char team ID from developer.apple.com
+#   APPLE_ID                           — Apple ID email used for notarization
+#   APPLE_APP_SPECIFIC_PASSWORD        — app-specific password from appleid.apple.com
+#   KEYCHAIN_PASSWORD                  — any string; gates the temporary keychain
 
 on:
   push:
@@ -21,7 +22,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-latest
+    runs-on: macos-26
 
     steps:
       - name: Checkout
@@ -50,6 +51,18 @@ jobs:
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
 
+      - name: Install provisioning profile
+        env:
+          PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          echo "$PROFILE_BASE64" | base64 --decode > "$PROFILE_DIR/wavebird.provisionprofile"
+          # Extract and print the profile name + UUID for verification.
+          security cms -D -i "$PROFILE_DIR/wavebird.provisionprofile" \
+            | plutil -extract Name xml1 -o - - \
+            | xmllint --xpath '//string/text()' -
+
       - name: Build (Release, signed, hardened runtime)
         run: |
           xcodebuild \
@@ -60,6 +73,7 @@ jobs:
             DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
+            PROVISIONING_PROFILE_SPECIFIER="WaveBird Developer ID" \
             OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
             build
 
