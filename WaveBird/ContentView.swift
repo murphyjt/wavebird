@@ -1,73 +1,83 @@
 import SwiftUI
 
 @Observable
-final class HIDTestHarness {
-    var deviceCreated = false
-    var lastError: String?
-    var pressCount = 0
+final class ScanLog {
+    private(set) var events: [String] = []
+    private(set) var isScanning = false
+
+    private let transport = BLETransport()
 
     @ObservationIgnored
-    private var device: VirtualHIDDevice?
+    private var consumer: Task<Void, Never>?
 
-    func press() async {
-        if device == nil {
-            guard let newDevice = VirtualHIDDevice(
-                descriptor: VirtualHIDDevice.placeholderGamepadDescriptor,
-                vendorID: 0x057E,
-                productID: 0xF000,
-                productName: "WaveBird Test Gamepad"
-            ) else {
-                lastError = "Failed to create virtual HID device — check entitlement"
-                return
+    func toggle() async {
+        if isScanning {
+            await transport.stopDiscovery()
+            isScanning = false
+        } else {
+            consumer = consumer ?? Task { [weak self] in
+                guard let self else { return }
+                for await event in transport.events {
+                    await MainActor.run { self.append(event) }
+                }
             }
-            await newDevice.activate()
-            device = newDevice
-            deviceCreated = true
-        }
-        pressCount += 1
-        let aPressed = pressCount.isMultiple(of: 2) == false
-        let report = Self.makeReport(buttonA: aPressed)
-        do {
-            try await device?.dispatch(report)
-            lastError = nil
-        } catch {
-            lastError = "dispatch error: \(error.localizedDescription)"
+            await transport.startDiscovery(matchers: [])
+            isScanning = true
         }
     }
 
-    static func makeReport(buttonA: Bool) -> Data {
-        var bytes = [UInt8](repeating: 0, count: 8)
-        bytes[6] = buttonA ? 0x01 : 0x00
-        return Data(bytes)
+    private func append(_ event: TransportEvent) {
+        let line: String
+        switch event {
+        case .discovered(let id, let info):
+            let name = info.localName ?? "—"
+            let pid = String(format: "0x%04X", info.productID)
+            line = "discovered  \(name)  PID=\(pid)  \(id.raw.uuidString.prefix(8))"
+        case .connecting(let id):
+            line = "connecting  \(id.raw.uuidString.prefix(8))"
+        case .connected(let id):
+            line = "connected   \(id.raw.uuidString.prefix(8))"
+        case .disconnected(let id, let reason):
+            line = "disconnected \(id.raw.uuidString.prefix(8)) (\(reason))"
+        case .reportReceived(let id, let data):
+            line = "report      \(id.raw.uuidString.prefix(8)) \(data.count)B"
+        case .error(_, let message):
+            line = "error       \(message)"
+        }
+        events.append(line)
+        if events.count > 200 { events.removeFirst(events.count - 200) }
     }
 }
 
 struct ContentView: View {
-    @State private var harness = HIDTestHarness()
+    @State private var log = ScanLog()
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "gamecontroller")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("WaveBird HID Test")
-                .font(.headline)
-            Text(harness.deviceCreated ? "Virtual gamepad active" : "Tap to create virtual gamepad")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Button("Toggle Button A (\(harness.pressCount))") {
-                Task { await harness.press() }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("WaveBird")
+                    .font(.headline)
+                Spacer()
+                Button(log.isScanning ? "Stop Scan" : "Start Scan") {
+                    Task { await log.toggle() }
+                }
+                .controlSize(.large)
             }
-            .controlSize(.large)
-            if let error = harness.lastError {
-                Text(error)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(log.events.indices.reversed(), id: \.self) { i in
+                        Text(log.events[i])
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(minHeight: 240)
+            .background(Color.secondary.opacity(0.08))
         }
-        .padding(32)
-        .frame(minWidth: 360, minHeight: 240)
+        .padding(16)
+        .frame(minWidth: 480, minHeight: 320)
     }
 }
 
