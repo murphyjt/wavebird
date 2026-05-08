@@ -20,6 +20,9 @@ permissions:
   id-token: write       # required by attest-build-provenance
   attestations: write   # write the SLSA attestation
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   release:
     runs-on: macos-26
