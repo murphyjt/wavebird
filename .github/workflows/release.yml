@@ -1,0 +1,158 @@
+name: Release
+
+# Required repository secrets:
+#   APPLE_CERTIFICATE_P12_BASE64    — Developer ID Application cert (.p12) base64-encoded
+#   APPLE_CERTIFICATE_PASSWORD      — password used when exporting the p12
+#   APPLE_TEAM_ID                   — 10-char team ID from developer.apple.com
+#   APPLE_ID                        — Apple ID email used for notarization
+#   APPLE_APP_SPECIFIC_PASSWORD     — app-specific password from appleid.apple.com
+#   KEYCHAIN_PASSWORD               — any string; gates the temporary keychain
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write       # create release + upload assets
+  id-token: write       # required by attest-build-provenance
+  attestations: write   # write the SLSA attestation
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Import Developer ID certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      - name: Build (Release, signed, hardened runtime)
+        run: |
+          xcodebuild \
+            -project WaveBird.xcodeproj \
+            -scheme WaveBird \
+            -configuration Release \
+            -derivedDataPath build \
+            DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
+            build
+
+      - name: Verify signature
+        run: |
+          codesign --verify --deep --strict --verbose=2 \
+            build/Build/Products/Release/WaveBird.app
+
+      - name: Notarize app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          APP_PATH="build/Build/Products/Release/WaveBird.app"
+          ZIP_PATH="WaveBird.zip"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          xcrun notarytool submit "$ZIP_PATH" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$APP_PATH"
+
+      - name: Stage app
+        run: |
+          mkdir -p dist
+          cp -R build/Build/Products/Release/WaveBird.app dist/
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Build DMG
+        run: |
+          create-dmg \
+            --volname "WaveBird ${{ steps.version.outputs.version }}" \
+            --window-size 540 360 \
+            --icon-size 100 \
+            --icon "WaveBird.app" 140 180 \
+            --app-drop-link 400 180 \
+            "dist/WaveBird-${{ steps.version.outputs.version }}.dmg" \
+            "dist/WaveBird.app"
+
+      - name: Sign DMG
+        run: |
+          codesign --sign "Developer ID Application" --timestamp \
+            "dist/WaveBird-${{ steps.version.outputs.version }}.dmg"
+
+      - name: Notarize and staple DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          DMG="dist/WaveBird-${{ steps.version.outputs.version }}.dmg"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WaveBird-${{ steps.version.outputs.version }}
+          path: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Install
+
+            1. Download `WaveBird-${{ steps.version.outputs.version }}.dmg` below.
+            2. Open the DMG and drag `WaveBird.app` to `/Applications`.
+
+            Signed and notarized by Apple — no Gatekeeper warning.
+
+            ## Provenance
+
+            Verify the build provenance with the GitHub CLI:
+
+            ```sh
+            gh attestation verify --repo ${{ github.repository }} WaveBird-${{ steps.version.outputs.version }}.dmg
+            ```
