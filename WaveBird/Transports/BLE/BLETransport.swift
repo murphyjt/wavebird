@@ -155,10 +155,9 @@ actor BLETransport: Transport {
     fileprivate func handleDisconnect(peripheral: CBPeripheral, error: Error?) {
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         let reason: DisconnectReason = error.map { .error($0.localizedDescription) } ?? .userInitiated
-        peripherals[peripheral.identifier] = nil
+        // Keep peripherals[]/matcherByDevice[] so connect() can be retried without a fresh advertisement.
         inputChars[peripheral.identifier] = nil
         outputChars[peripheral.identifier] = nil
-        matcherByDevice[peripheral.identifier] = nil
         continuation.yield(.disconnected(id, reason))
     }
 

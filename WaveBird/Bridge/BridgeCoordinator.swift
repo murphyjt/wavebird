@@ -16,6 +16,7 @@ struct DeviceRecord: Identifiable {
     var advertisement: AdvertisementInfo
     var connectionState: DeviceConnectionState
     var virtualHID: VirtualHIDDevice?
+    var reportRate: Double = 0
 }
 
 @Observable
@@ -31,9 +32,20 @@ final class BridgeCoordinator {
     @ObservationIgnored
     private var consumerTask: Task<Void, Never>?
 
+    @ObservationIgnored
+    private var rateTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var reportCounts: [DeviceID: Int] = [:]
+
     init(profiles: [any ControllerProfile], transports: [any Transport]) {
         self.profiles = profiles
         self.transports = transports
+    }
+
+    deinit {
+        consumerTask?.cancel()
+        rateTask?.cancel()
     }
 
     func start() async {
@@ -50,6 +62,22 @@ final class BridgeCoordinator {
                 }
             }
         }
+        rateTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                self?.snapshotRates()
+            }
+        }
+    }
+
+    private func snapshotRates() {
+        for (id, count) in reportCounts {
+            devices[id]?.reportRate = Double(count)
+        }
+        for id in devices.keys where reportCounts[id] == nil {
+            devices[id]?.reportRate = 0
+        }
+        reportCounts.removeAll(keepingCapacity: true)
     }
 
     func toggleScan() async {
@@ -71,15 +99,24 @@ final class BridgeCoordinator {
     private func handle(_ event: TransportEvent, kind: TransportKind) async {
         switch event {
         case .discovered(let id, let info):
-            guard devices[id] == nil else { return }
-            guard let profile = profile(forProductID: info.productID, kind: kind) else { return }
-            devices[id] = DeviceRecord(
-                id: id,
-                profile: profile,
-                advertisement: info,
-                connectionState: .discovered,
-                virtualHID: nil
-            )
+            if let existing = devices[id] {
+                // Re-discovery: only re-attempt connect if not already in flight.
+                switch existing.connectionState {
+                case .connected, .connecting, .discovered: return
+                case .disconnected, .failed: break
+                }
+                devices[id]?.connectionState = .discovered
+                devices[id]?.advertisement = info
+            } else {
+                guard let profile = profile(forProductID: info.productID, kind: kind) else { return }
+                devices[id] = DeviceRecord(
+                    id: id,
+                    profile: profile,
+                    advertisement: info,
+                    connectionState: .discovered,
+                    virtualHID: nil
+                )
+            }
             guard let t = transport(for: kind) else { return }
             do {
                 try await t.connect(id)
@@ -107,10 +144,13 @@ final class BridgeCoordinator {
         case .disconnected(let id, _):
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
+            devices[id]?.reportRate = 0
+            reportCounts[id] = nil
 
         case .reportReceived(let id, let reportID, let data):
             guard let record = devices[id] else { return }
             lastReportSnapshot = ReportSnapshot(deviceID: id, data: data)
+            reportCounts[id, default: 0] += 1
             let parsed: ControllerState?
             switch kind {
             case .ble: parsed = record.profile.parseBLEReport(data)

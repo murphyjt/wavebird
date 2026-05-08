@@ -77,6 +77,12 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundStyle(.green)
                 }
+                Spacer()
+                if record.connectionState == .connected, record.reportRate > 0 {
+                    Text("\(Int(record.reportRate)) Hz")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             Text("PID 0x\(String(format: "%04X", record.advertisement.productID)) — \(record.id.raw.uuidString.prefix(8))")
                 .font(.caption2)
