@@ -108,13 +108,13 @@ final class BridgeCoordinator {
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
 
-        case .reportReceived(let id, let data):
+        case .reportReceived(let id, let reportID, let data):
             guard let record = devices[id] else { return }
             lastReportSnapshot = ReportSnapshot(deviceID: id, data: data)
             let parsed: ControllerState?
             switch kind {
             case .ble: parsed = record.profile.parseBLEReport(data)
-            case .usb: parsed = record.profile.parseUSBReport(data, reportID: 0)
+            case .usb: parsed = record.profile.parseUSBReport(data, reportID: reportID ?? 0)
             }
             if let state = parsed, let vhid = record.virtualHID {
                 let report = record.profile.buildHIDReport(state)

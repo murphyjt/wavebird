@@ -189,7 +189,7 @@ actor BLETransport: Transport {
         guard let inputCh = inputChars[peripheral.identifier],
               characteristic == inputCh else { return }
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
-        continuation.yield(.reportReceived(id, value))
+        continuation.yield(.reportReceived(id, reportID: nil, value))
     }
 }
 

@@ -20,6 +20,6 @@ nonisolated enum TransportEvent: Sendable {
     case connecting(DeviceID)
     case connected(DeviceID)
     case disconnected(DeviceID, DisconnectReason)
-    case reportReceived(DeviceID, Data)
+    case reportReceived(DeviceID, reportID: UInt8?, Data)
     case error(DeviceID?, String)
 }
