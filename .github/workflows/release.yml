@@ -77,6 +77,18 @@ jobs:
             OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
             build
 
+      - name: Re-sign with explicit entitlements
+        run: |
+          APP_PATH="build/Build/Products/Release/WaveBird.app"
+          codesign --force \
+            --sign "Developer ID Application" \
+            --options runtime \
+            --timestamp \
+            --entitlements WaveBird/WaveBird.entitlements \
+            "$APP_PATH"
+          echo "Signed entitlements:"
+          codesign -d --entitlements :- "$APP_PATH"
+
       - name: Verify signature
         run: |
           codesign --verify --deep --strict --verbose=2 \
