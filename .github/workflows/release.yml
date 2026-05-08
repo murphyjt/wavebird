@@ -91,11 +91,25 @@ jobs:
           APP_PATH="build/Build/Products/Release/WaveBird.app"
           ZIP_PATH="WaveBird.zip"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
-          xcrun notarytool submit "$ZIP_PATH" \
+          RESULT=$(xcrun notarytool submit "$ZIP_PATH" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait
+            --wait \
+            --output-format json)
+          echo "$RESULT"
+          STATUS=$(echo "$RESULT" | jq -r '.status')
+          ID=$(echo "$RESULT" | jq -r '.id')
+          if [[ "$STATUS" != "Accepted" ]]; then
+            echo "::error::Notarization failed: $STATUS"
+            echo "::group::Notarization log"
+            xcrun notarytool log "$ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD"
+            echo "::endgroup::"
+            exit 1
+          fi
           xcrun stapler staple "$APP_PATH"
 
       - name: Stage app
@@ -129,11 +143,25 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           DMG="dist/WaveBird-${{ steps.version.outputs.version }}.dmg"
-          xcrun notarytool submit "$DMG" \
+          RESULT=$(xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait
+            --wait \
+            --output-format json)
+          echo "$RESULT"
+          STATUS=$(echo "$RESULT" | jq -r '.status')
+          ID=$(echo "$RESULT" | jq -r '.id')
+          if [[ "$STATUS" != "Accepted" ]]; then
+            echo "::error::DMG notarization failed: $STATUS"
+            echo "::group::Notarization log"
+            xcrun notarytool log "$ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD"
+            echo "::endgroup::"
+            exit 1
+          fi
           xcrun stapler staple "$DMG"
           spctl --assess --type open --context context:primary-signature -vv "$DMG"
 
