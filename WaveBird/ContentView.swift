@@ -1,56 +1,7 @@
 import SwiftUI
 
-@Observable
-final class ScanLog {
-    private(set) var events: [String] = []
-    private(set) var isScanning = false
-
-    private let transport = BLETransport()
-
-    @ObservationIgnored
-    private var consumer: Task<Void, Never>?
-
-    func toggle() async {
-        if isScanning {
-            await transport.stopDiscovery()
-            isScanning = false
-        } else {
-            consumer = consumer ?? Task { [weak self] in
-                guard let self else { return }
-                for await event in transport.events {
-                    await MainActor.run { self.append(event) }
-                }
-            }
-            await transport.startDiscovery(matchers: [])
-            isScanning = true
-        }
-    }
-
-    private func append(_ event: TransportEvent) {
-        let line: String
-        switch event {
-        case .discovered(let id, let info):
-            let name = info.localName ?? "—"
-            let pid = String(format: "0x%04X", info.productID)
-            line = "discovered  \(name)  PID=\(pid)  \(id.raw.uuidString.prefix(8))"
-        case .connecting(let id):
-            line = "connecting  \(id.raw.uuidString.prefix(8))"
-        case .connected(let id):
-            line = "connected   \(id.raw.uuidString.prefix(8))"
-        case .disconnected(let id, let reason):
-            line = "disconnected \(id.raw.uuidString.prefix(8)) (\(reason))"
-        case .reportReceived(let id, let data):
-            line = "report      \(id.raw.uuidString.prefix(8)) \(data.count)B"
-        case .error(_, let message):
-            line = "error       \(message)"
-        }
-        events.append(line)
-        if events.count > 200 { events.removeFirst(events.count - 200) }
-    }
-}
-
 struct ContentView: View {
-    @State private var log = ScanLog()
+    @Bindable var coordinator: BridgeCoordinator
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -58,29 +9,98 @@ struct ContentView: View {
                 Text("WaveBird")
                     .font(.headline)
                 Spacer()
-                Button(log.isScanning ? "Stop Scan" : "Start Scan") {
-                    Task { await log.toggle() }
+                Button(coordinator.isScanning ? "Stop Scan" : "Start Scan") {
+                    Task { await coordinator.toggleScan() }
                 }
                 .controlSize(.large)
             }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(log.events.indices.reversed(), id: \.self) { i in
-                        Text(log.events[i])
-                            .font(.system(.caption, design: .monospaced))
-                            .lineLimit(1)
+
+            if coordinator.devices.isEmpty {
+                Text("No devices yet — start scan and pair a controller")
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity)
+            } else {
+                ForEach(Array(coordinator.devices.values)) { record in
+                    deviceRow(record)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Last raw report").font(.caption).foregroundStyle(.secondary)
+                if let snap = coordinator.lastReportSnapshot {
+                    Text("\(snap.data.count) bytes").font(.caption2).foregroundStyle(.secondary)
+                    Text(snap.hex)
+                        .font(.system(.caption, design: .monospaced))
+                        .lineLimit(8)
+                        .textSelection(.enabled)
+                } else {
+                    Text("—").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Log").font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(coordinator.log.indices.reversed(), id: \.self) { i in
+                            Text(coordinator.log[i])
+                                .font(.system(.caption2, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: 160)
+                .background(Color.secondary.opacity(0.06))
             }
-            .frame(minHeight: 240)
-            .background(Color.secondary.opacity(0.08))
         }
         .padding(16)
-        .frame(minWidth: 480, minHeight: 320)
+        .frame(minWidth: 560, minHeight: 560)
     }
-}
 
-#Preview {
-    ContentView()
+    @ViewBuilder
+    private func deviceRow(_ record: DeviceRecord) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(record.profile.name)
+                    .font(.subheadline.weight(.semibold))
+                Text(stateLabel(record.connectionState))
+                    .font(.caption)
+                    .foregroundStyle(stateColor(record.connectionState))
+                if record.virtualHID != nil {
+                    Text("• HID active")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            }
+            Text("PID 0x\(String(format: "%04X", record.advertisement.productID)) — \(record.id.raw.uuidString.prefix(8))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func stateLabel(_ s: DeviceConnectionState) -> String {
+        switch s {
+        case .discovered: "discovered"
+        case .connecting: "connecting"
+        case .connected: "connected"
+        case .disconnected: "disconnected"
+        case .failed(let msg): "failed: \(msg)"
+        }
+    }
+
+    private func stateColor(_ s: DeviceConnectionState) -> Color {
+        switch s {
+        case .connected: .green
+        case .connecting, .discovered: .orange
+        case .disconnected: .secondary
+        case .failed: .red
+        }
+    }
 }

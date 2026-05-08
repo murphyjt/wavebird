@@ -9,21 +9,22 @@ nonisolated enum BLETransportError: Error {
 actor BLETransport: Transport {
     nonisolated let kind: TransportKind = .ble
     nonisolated let events: AsyncStream<TransportEvent>
+    nonisolated let continuation: AsyncStream<TransportEvent>.Continuation
 
-    private let continuation: AsyncStream<TransportEvent>.Continuation
     private let queue: DispatchQueue
     private let central: CBCentralManager
     private let delegate: BLEDelegate
 
     private var matchers: [BLEMatcher] = []
+    private var wantsScan: Bool = false
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var matcherByDevice: [UUID: BLEMatcher] = [:]
     private var inputChars: [UUID: CBCharacteristic] = [:]
     private var outputChars: [UUID: CBCharacteristic] = [:]
 
     init() {
-        let (stream, cont) = AsyncStream.makeStream(of: TransportEvent.self)
-        let q = DispatchQueue(label: "wavebird.ble", qos: .userInitiated)
+        let (stream, cont) = AsyncStream.makeStream(of: TransportEvent.self, bufferingPolicy: .unbounded)
+        let q = DispatchQueue.main
         let d = BLEDelegate()
         let c = CBCentralManager(delegate: d, queue: q)
         self.events = stream
@@ -41,17 +42,48 @@ actor BLETransport: Transport {
             if case .ble(let bm) = m { return bm } else { return nil }
         }
         self.matchers = ble
+        wantsScan = true
+        startScanIfReady()
+        retrieveAlreadyConnected()
+    }
+
+    private func retrieveAlreadyConnected() {
         guard central.state == .poweredOn else { return }
-        let services = ble.map(\.serviceUUID)
-        central.scanForPeripherals(
-            withServices: services.isEmpty ? nil : services,
-            options: nil
-        )
+        let services = matchers.map(\.serviceUUID)
+        guard !services.isEmpty else { return }
+        let connected = central.retrieveConnectedPeripherals(withServices: services)
+        for p in connected {
+            peripherals[p.identifier] = p
+            if let m = matchers.first {
+                matcherByDevice[p.identifier] = m
+            }
+            let id = DeviceID(transport: .ble, raw: p.identifier)
+            let info = AdvertisementInfo(vendorID: 0x057E, productID: 0, localName: p.name, rssi: 0)
+            continuation.yield(.discovered(id, info))
+        }
     }
 
     func stopDiscovery() async {
+        wantsScan = false
         guard central.state == .poweredOn else { return }
         central.stopScan()
+    }
+
+    private func startScanIfReady() {
+        guard wantsScan, central.state == .poweredOn else { return }
+        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+    }
+
+    private func stateName(_ s: CBManagerState) -> String {
+        switch s {
+        case .unknown: "unknown"
+        case .resetting: "resetting"
+        case .unsupported: "unsupported"
+        case .unauthorized: "unauthorized"
+        case .poweredOff: "poweredOff"
+        case .poweredOn: "poweredOn"
+        @unknown default: "unknown(\(s.rawValue))"
+        }
     }
 
     func connect(_ id: DeviceID) async throws {
@@ -77,8 +109,9 @@ actor BLETransport: Transport {
 
     fileprivate func handleStateUpdate(_ state: CBManagerState) {
         if state != .poweredOn {
-            continuation.yield(.error(nil, "BLE state: \(state.rawValue)"))
+            continuation.yield(.error(nil, "BLE: \(stateName(state))"))
         }
+        startScanIfReady()
     }
 
     fileprivate func handleDiscovery(
@@ -88,12 +121,16 @@ actor BLETransport: Transport {
         rssi: Int
     ) {
         guard let mfg = mfgData,
-              let parsed = BLEAdvertisementDecoder.decodeNintendoMfgData(mfg) else { return }
-        let matcher = matchers.first { $0.productID == parsed.productID }
-        let accept = matchers.isEmpty ? parsed.vendorID == 0x057E : (matcher != nil)
-        guard accept else { return }
+              let parsed = BLEAdvertisementDecoder.decodeNintendoMfgData(mfg),
+              parsed.vendorID == 0x057E else { return }
+
+        guard let matcher = matchers.first(where: { $0.productID == parsed.productID }) else {
+            let pidHex = String(format: "0x%04X", parsed.productID)
+            continuation.yield(.error(nil, "Nintendo PID=\(pidHex) (no matching profile)"))
+            return
+        }
         peripherals[peripheral.identifier] = peripheral
-        if let m = matcher { matcherByDevice[peripheral.identifier] = m }
+        matcherByDevice[peripheral.identifier] = matcher
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         let info = AdvertisementInfo(
             vendorID: parsed.vendorID,

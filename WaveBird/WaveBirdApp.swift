@@ -1,17 +1,16 @@
-//
-//  WaveBirdApp.swift
-//  WaveBird
-//
-//  Created by Joshua Murphy on 5/7/26.
-//
-
 import SwiftUI
 
 @main
 struct WaveBirdApp: App {
+    @State private var coordinator = BridgeCoordinator(
+        profiles: [NS2GameCubeProfile()],
+        transports: [BLETransport()]
+    )
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(coordinator: coordinator)
+                .task { await coordinator.start() }
         }
     }
 }
