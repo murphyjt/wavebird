@@ -145,6 +145,9 @@ final class BridgeCoordinator {
                 await vhid.activate()
                 devices[id]?.virtualHID = vhid
             }
+            if let t = transport(for: kind) {
+                Task { [weak self] in await self?.logFirmwareInfo(id: id, transport: t) }
+            }
 
         case .disconnected(let id, _):
             devices[id]?.connectionState = .disconnected
@@ -174,6 +177,25 @@ final class BridgeCoordinator {
     private func appendLog(_ line: String) {
         log.append(line)
         if log.count > 200 { log.removeFirst(log.count - 200) }
+    }
+
+    private func logFirmwareInfo(id: DeviceID, transport: any Transport) async {
+        let response: Data?
+        do {
+            response = try await transport.sendAwaitingResponse(
+                NS2GameCubeProfile.firmwareInfoCommand,
+                to: id,
+                timeout: .milliseconds(300)
+            )
+        } catch {
+            appendLog("firmware: \(error)")
+            return
+        }
+        guard let response, let info = NS2GameCubeProfile.parseFirmwareInfo(response) else {
+            appendLog("firmware: no response")
+            return
+        }
+        appendLog("firmware: \(info)")
     }
 
     private func profile(forProductID pid: UInt16, kind: TransportKind) -> (any ControllerProfile)? {

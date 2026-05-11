@@ -1,8 +1,48 @@
 @preconcurrency import CoreBluetooth
 import Foundation
 
+struct FirmwareInfo: Sendable, CustomStringConvertible {
+    var controllerVersion: (UInt8, UInt8, UInt8)
+    var controllerType: UInt8
+    var bluetoothPatch: (UInt8, UInt8, UInt8)
+
+    var typeName: String {
+        switch controllerType {
+        case 0x00: "JoyCon (L)"
+        case 0x01: "JoyCon (R)"
+        case 0x02: "Pro Controller"
+        case 0x03: "GameCube"
+        default:   String(format: "0x%02X", controllerType)
+        }
+    }
+
+    var description: String {
+        let (cM, cm, cp) = controllerVersion
+        let (bM, bm, bp) = bluetoothPatch
+        return "\(typeName) fw \(cM).\(cm).\(cp), BT patch \(bM).\(bm).\(bp)"
+    }
+}
+
 struct NS2GameCubeProfile: ControllerProfile {
     let name = "Nintendo GameCube Controller"
+
+    static let firmwareInfoCommand = Data([
+        0x10, 0x91, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
+    ])
+
+    // Response: 8-byte ACK header + payload at offset 8.
+    //   [8..10] controller fw major.minor.micro
+    //   [11]    controller type (0x03 = GameCube)
+    //   [12..14] Bluetooth patch major.minor.micro
+    static func parseFirmwareInfo(_ data: Data) -> FirmwareInfo? {
+        guard data.count >= 15 else { return nil }
+        let b = data.startIndex
+        return FirmwareInfo(
+            controllerVersion: (data[b + 8], data[b + 9], data[b + 10]),
+            controllerType: data[b + 11],
+            bluetoothPatch: (data[b + 12], data[b + 13], data[b + 14])
+        )
+    }
 
     var bleMatcher: BLEMatcher? {
         BLEMatcher(
