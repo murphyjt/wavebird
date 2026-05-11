@@ -10,7 +10,14 @@ struct NS2GameCubeProfile: ControllerProfile {
             serviceUUID: CBUUID(string: "AB7DE9BE-89FE-49AD-828F-118F09DF7FD0"),
             inputCharacteristic: CBUUID(string: "AB7DE9BE-89FE-49AD-828F-118F09DF7FD2"),
             outputCharacteristic: CBUUID(string: "649D4AC9-8EB7-4E6C-AF44-1EA54FE5F005"),
+            responseCharacteristic: CBUUID(string: "C765A961-D9D8-4D36-A20A-5315B111836A"),
             initCommands: [
+                // Play vibration sample 0x03 "connection" (cmd 0x0A, subcmd 0x02).
+                Data([
+                    0x0A, 0x91, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00,
+                    0x03, 0x00, 0x00, 0x00,
+                ]),
+                // Player 1 LED via setLEDPattern (cmd 0x09, subcmd 0x07).
                 Data([
                     0x09, 0x91, 0x01, 0x07, 0x00, 0x08, 0x00, 0x00,
                     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

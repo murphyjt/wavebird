@@ -21,6 +21,8 @@ actor BLETransport: Transport {
     private var matcherByDevice: [UUID: BLEMatcher] = [:]
     private var inputChars: [UUID: CBCharacteristic] = [:]
     private var outputChars: [UUID: CBCharacteristic] = [:]
+    private var responseChars: [UUID: CBCharacteristic] = [:]
+    private var pendingResponses: [UUID: CheckedContinuation<Data?, Never>] = [:]
 
     init() {
         let (stream, cont) = AsyncStream.makeStream(of: TransportEvent.self, bufferingPolicy: .unbounded)
@@ -105,6 +107,33 @@ actor BLETransport: Transport {
         p.writeValue(payload, for: ch, type: writeType(for: ch))
     }
 
+    func sendAwaitingResponse(_ payload: Data, to id: DeviceID, timeout: Duration) async throws -> Data? {
+        guard let p = peripherals[id.raw], let ch = outputChars[id.raw] else {
+            throw BLETransportError.unknownDevice
+        }
+        // No response char subscribed → fall back to fire-and-forget.
+        guard responseChars[id.raw] != nil else {
+            p.writeValue(payload, for: ch, type: writeType(for: ch))
+            return nil
+        }
+        precondition(pendingResponses[id.raw] == nil, "overlapping sendAwaitingResponse for \(id.raw)")
+        let type = writeType(for: ch)
+        return await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
+            pendingResponses[id.raw] = cont
+            p.writeValue(payload, for: ch, type: type)
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                await self?.expirePending(id: id.raw)
+            }
+        }
+    }
+
+    private func expirePending(id: UUID) {
+        if let cont = pendingResponses.removeValue(forKey: id) {
+            cont.resume(returning: nil)
+        }
+    }
+
     private nonisolated func writeType(for ch: CBCharacteristic) -> CBCharacteristicWriteType {
         ch.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
     }
@@ -160,6 +189,10 @@ actor BLETransport: Transport {
         // Keep peripherals[]/matcherByDevice[] so connect() can be retried without a fresh advertisement.
         inputChars[peripheral.identifier] = nil
         outputChars[peripheral.identifier] = nil
+        responseChars[peripheral.identifier] = nil
+        if let cont = pendingResponses.removeValue(forKey: peripheral.identifier) {
+            cont.resume(returning: nil)
+        }
         continuation.yield(.disconnected(id, reason))
     }
 
@@ -169,35 +202,51 @@ actor BLETransport: Transport {
               let svc = services.first(where: { $0.uuid == m.serviceUUID }) else { return }
         var chars = [m.inputCharacteristic]
         if let out = m.outputCharacteristic { chars.append(out) }
+        if let rsp = m.responseCharacteristic { chars.append(rsp) }
         peripheral.discoverCharacteristics(chars, for: svc)
     }
 
-    fileprivate func handleCharacteristicsDiscovered(peripheral: CBPeripheral, service: CBService) {
+    fileprivate func handleCharacteristicsDiscovered(peripheral: CBPeripheral, service: CBService) async {
         guard let m = matcherByDevice[peripheral.identifier],
               let chars = service.characteristics else { return }
         guard let inputCh = chars.first(where: { $0.uuid == m.inputCharacteristic }) else { return }
         inputChars[peripheral.identifier] = inputCh
         peripheral.setNotifyValue(true, for: inputCh)
 
+        if let rspUUID = m.responseCharacteristic,
+           let rspCh = chars.first(where: { $0.uuid == rspUUID }) {
+            responseChars[peripheral.identifier] = rspCh
+            peripheral.setNotifyValue(true, for: rspCh)
+        }
+
         if let outUUID = m.outputCharacteristic,
            let outCh = chars.first(where: { $0.uuid == outUUID }) {
             outputChars[peripheral.identifier] = outCh
-            let type = writeType(for: outCh)
-            for cmd in m.initCommands {
-                peripheral.writeValue(cmd, for: outCh, type: type)
-            }
         }
 
+        // Give the CCCD writes a moment to land before issuing commands.
+        try? await Task.sleep(for: .milliseconds(20))
+
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
+        for cmd in m.initCommands {
+            _ = try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(300))
+        }
+
         continuation.yield(.ready(id))
     }
 
     fileprivate func handleNotification(peripheral: CBPeripheral, characteristic: CBCharacteristic) {
         guard let value = characteristic.value else { return }
-        guard let inputCh = inputChars[peripheral.identifier],
-              characteristic == inputCh else { return }
-        let id = DeviceID(transport: .ble, raw: peripheral.identifier)
-        continuation.yield(.reportReceived(id, reportID: nil, value))
+        if let inputCh = inputChars[peripheral.identifier], characteristic == inputCh {
+            let id = DeviceID(transport: .ble, raw: peripheral.identifier)
+            continuation.yield(.reportReceived(id, reportID: nil, value))
+            return
+        }
+        if let rspCh = responseChars[peripheral.identifier], characteristic == rspCh {
+            if let cont = pendingResponses.removeValue(forKey: peripheral.identifier) {
+                cont.resume(returning: value)
+            }
+        }
     }
 }
 
