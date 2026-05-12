@@ -42,6 +42,21 @@ struct NS2GameCubeProfile: ControllerProfile {
         0x10, 0x91, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
     ])
 
+    // GC reports buttons | analog | IMU | rumble. Pro adds bit 0x08; JoyCon adds mouse (0x10).
+    private static let featureMask: UInt8 = 0x27
+
+    // Cmd 0x0C/0x02 — declare which features are allowed in subsequent enable/disable calls.
+    static let setFeatureMaskCommand = Data([
+        0x0C, 0x91, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00,
+        featureMask, 0x00, 0x00, 0x00,
+    ])
+
+    // Cmd 0x0C/0x04 — turn on the features set in the mask above.
+    static let enableFeaturesCommand = Data([
+        0x0C, 0x91, 0x01, 0x04, 0x00, 0x04, 0x00, 0x00,
+        featureMask, 0x00, 0x00, 0x00,
+    ])
+
     // Cmd 0x0A/0x02 — play vibration sample 0x03 ("connection" tone).
     static let connectionVibrationCommand = Data([
         0x0A, 0x91, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00,
@@ -96,6 +111,8 @@ struct NS2GameCubeProfile: ControllerProfile {
                 Self.handshakeCommand,
                 Self.factoryDataReadCommand,
                 Self.firmwareInfoCommand,
+                Self.setFeatureMaskCommand,
+                Self.enableFeaturesCommand,
                 Self.connectionVibrationCommand,
                 Self.player1LEDCommand,
             ]

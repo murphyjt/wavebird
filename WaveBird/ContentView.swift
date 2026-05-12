@@ -110,9 +110,9 @@ struct ContentView: View {
                 if let snap = coordinator.lastReportSnapshot {
                     Text("\(snap.data.count) bytes")
                         .font(.caption2).foregroundStyle(.secondary)
-                    Text(snap.hex)
+                    Text(snap.hexLines)
                         .font(.system(.caption2, design: .monospaced))
-                        .lineLimit(8)
+                        .lineLimit(nil)
                         .textSelection(.enabled)
                 } else {
                     Text("—").font(.caption2).foregroundStyle(.secondary)

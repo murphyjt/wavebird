@@ -265,4 +265,15 @@ struct ReportSnapshot: Sendable {
     var hex: String {
         data.map { String(format: "%02X", $0) }.joined(separator: " ")
     }
+
+    // Same hex, broken into 8-byte lines.
+    var hexLines: String {
+        let b = data.startIndex
+        return stride(from: 0, to: data.count, by: 8).map { start in
+            let end = min(start + 8, data.count)
+            return data[(b + start)..<(b + end)]
+                .map { String(format: "%02X", $0) }
+                .joined(separator: " ")
+        }.joined(separator: "\n")
+    }
 }

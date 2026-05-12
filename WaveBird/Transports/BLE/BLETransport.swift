@@ -23,7 +23,7 @@ actor BLETransport: Transport {
     private var outputChars: [UUID: CBCharacteristic] = [:]
     // Per device, a map of subscribed response-char UUID → its handle.
     private var responseHandles: [UUID: [CBUUID: UInt16]] = [:]
-    private var pendingResponses: [UUID: CheckedContinuation<CommandResponseFrame?, Never>] = [:]
+    private var pendingResponses: [UUID: (request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
 
     init() {
         let (stream, cont) = AsyncStream.makeStream(of: TransportEvent.self, bufferingPolicy: .unbounded)
@@ -120,7 +120,7 @@ actor BLETransport: Transport {
         precondition(pendingResponses[id.raw] == nil, "overlapping sendAwaitingResponse for \(id.raw)")
         let type = writeType(for: ch)
         return await withCheckedContinuation { (cont: CheckedContinuation<CommandResponseFrame?, Never>) in
-            pendingResponses[id.raw] = cont
+            pendingResponses[id.raw] = (request: payload, cont: cont)
             p.writeValue(payload, for: ch, type: type)
             Task { [weak self] in
                 try? await Task.sleep(for: timeout)
@@ -130,9 +130,17 @@ actor BLETransport: Transport {
     }
 
     private func expirePending(id: UUID) {
-        if let cont = pendingResponses.removeValue(forKey: id) {
-            cont.resume(returning: nil)
+        if let pending = pendingResponses.removeValue(forKey: id) {
+            pending.cont.resume(returning: nil)
         }
+    }
+
+    // Response framing echoes the request's cmd ID (byte 0) and subcmd (byte 3).
+    private nonisolated func responseMatches(request: Data, response: Data) -> Bool {
+        guard request.count >= 4, response.count >= 4 else { return false }
+        let r = request.startIndex
+        let s = response.startIndex
+        return request[r] == response[s] && request[r + 3] == response[s + 3]
     }
 
     private nonisolated func writeType(for ch: CBCharacteristic) -> CBCharacteristicWriteType {
@@ -191,8 +199,8 @@ actor BLETransport: Transport {
         inputChars[peripheral.identifier] = nil
         outputChars[peripheral.identifier] = nil
         responseHandles[peripheral.identifier] = nil
-        if let cont = pendingResponses.removeValue(forKey: peripheral.identifier) {
-            cont.resume(returning: nil)
+        if let pending = pendingResponses.removeValue(forKey: peripheral.identifier) {
+            pending.cont.resume(returning: nil)
         }
         continuation.yield(.disconnected(id, reason))
     }
@@ -212,7 +220,8 @@ actor BLETransport: Transport {
               let chars = service.characteristics else { return }
         guard let inputCh = chars.first(where: { $0.uuid == m.inputCharacteristic }) else { return }
         inputChars[peripheral.identifier] = inputCh
-        peripheral.setNotifyValue(true, for: inputCh)
+        // Defer the input-report subscription until after init — we don't want a flood of
+        // HID reports interleaving with the command handshake.
 
         var handles: [CBUUID: UInt16] = [:]
         for rsp in m.responseCharacteristics {
@@ -232,9 +241,12 @@ actor BLETransport: Transport {
 
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         for cmd in m.initCommands {
-            let resp = (try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(300))) ?? nil
+            let resp = (try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(500))) ?? nil
             continuation.yield(.commandResponse(id, request: cmd, response: resp))
         }
+
+        // Init complete — open the input-report firehose.
+        peripheral.setNotifyValue(true, for: inputCh)
 
         continuation.yield(.ready(id))
     }
@@ -248,8 +260,10 @@ actor BLETransport: Transport {
         }
         if let handle = responseHandles[peripheral.identifier]?[characteristic.uuid] {
             let frame = CommandResponseFrame(data: value, sourceHandle: handle)
-            if let cont = pendingResponses.removeValue(forKey: peripheral.identifier) {
-                cont.resume(returning: frame)
+            if let pending = pendingResponses[peripheral.identifier],
+               responseMatches(request: pending.request, response: value) {
+                pendingResponses.removeValue(forKey: peripheral.identifier)
+                pending.cont.resume(returning: frame)
             } else {
                 continuation.yield(.unmatchedResponse(id, value, sourceHandle: handle))
             }
