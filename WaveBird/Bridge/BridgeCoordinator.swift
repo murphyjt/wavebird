@@ -22,6 +22,7 @@ struct DeviceRecord: Identifiable {
     var serial: String? = nil
     var firmware: FirmwareInfo? = nil
     var triggerZeros: (left: UInt8, right: UInt8)? = nil
+    var calibration = StickCalibrationPair()
 }
 
 @MainActor
@@ -195,6 +196,16 @@ final class BridgeCoordinator {
                             devices[id]?.triggerZeros = zeros
                             FileHandle.standardError.write(Data("[ble] trigger zeros: L=\(zeros.left) R=\(zeros.right)\n".utf8))
                         }
+                    case 0x13080:
+                        if let cal = NS2GameCubeProfile.parseStickCalibration(flashData) {
+                            devices[id]?.calibration.left = cal
+                            FileHandle.standardError.write(Data("[ble] L stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
+                        }
+                    case 0x130C0:
+                        if let cal = NS2GameCubeProfile.parseStickCalibration(flashData) {
+                            devices[id]?.calibration.right = cal
+                            FileHandle.standardError.write(Data("[ble] R stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
+                        }
                     default:
                         break
                     }
@@ -244,8 +255,8 @@ final class BridgeCoordinator {
             }
             let parsed: ControllerState?
             switch kind {
-            case .ble: parsed = record.profile.parseBLEReport(data)
-            case .usb: parsed = record.profile.parseUSBReport(data, reportID: reportID ?? 0)
+            case .ble: parsed = record.profile.parseBLEReport(data, calibration: record.calibration)
+            case .usb: parsed = record.profile.parseUSBReport(data, reportID: reportID ?? 0, calibration: record.calibration)
             }
             if var state = parsed {
                 if let zeros = record.triggerZeros {

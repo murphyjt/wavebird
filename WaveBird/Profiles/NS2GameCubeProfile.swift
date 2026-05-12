@@ -45,6 +45,22 @@ struct NS2GameCubeProfile: ControllerProfile {
         0x02, 0x7E, 0x00, 0x00, 0x40, 0x31, 0x01, 0x00,
     ])
 
+    // Cmd 0x02/0x04 — read 0x40 bytes from flash 0x13080: factory left-stick calibration block.
+    // The 9-byte calibration record sits at offset 0x28 inside the block (i.e. flash 0x130A8).
+    // Address, layout and packing come from SDL's HIDAPI Switch2 driver
+    // (libsdl-org/SDL: src/joystick/hidapi/SDL_hidapi_switch2.c) and darthcloud/BlueRetro
+    // (main/bluetooth/hidp/sw2.c, Apache-2.0). Frame matches ndeadly's example.
+    static let leftStickCalibrationReadCommand = Data([
+        0x02, 0x91, 0x01, 0x04, 0x00, 0x08, 0x00, 0x00,
+        0x40, 0x7E, 0x00, 0x00, 0x80, 0x30, 0x01, 0x00,
+    ])
+
+    // Cmd 0x02/0x04 — read 0x40 bytes from flash 0x130C0: factory right-stick calibration block.
+    static let rightStickCalibrationReadCommand = Data([
+        0x02, 0x91, 0x01, 0x04, 0x00, 0x08, 0x00, 0x00,
+        0x40, 0x7E, 0x00, 0x00, 0xC0, 0x30, 0x01, 0x00,
+    ])
+
     // Cmd 0x10/0x01 — get firmware version info.
     static let firmwareInfoCommand = Data([
         0x10, 0x91, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
@@ -123,6 +139,27 @@ struct NS2GameCubeProfile: ControllerProfile {
         return (flashData[b], flashData[b + 1])
     }
 
+    // Input: the 0x40-byte flash block read from 0x13080 (or 0x130C0).
+    // The 9-byte stick calibration record lives at offset 0x28 inside the block.
+    // Packing (per axis, 12-bit, little-endian nibble-packed):
+    //   bytes 0..2 → neutralX, neutralY
+    //   bytes 3..5 → maxX (above center), maxY
+    //   bytes 6..8 → minX (below center), minY
+    // Layout from SDL (libsdl-org/SDL: src/joystick/hidapi/SDL_hidapi_switch2.c,
+    // ParseStickCalibration) and darthcloud/BlueRetro (main/bluetooth/hidp/sw2.c,
+    // bt_hid_sw2_set_calib, Apache-2.0).
+    static func parseStickCalibration(_ flashBlock: Data) -> StickCalibration? {
+        guard flashBlock.count >= 0x28 + 9 else { return nil }
+        let b = flashBlock.startIndex.advanced(by: 0x28)
+        let nX = UInt16(flashBlock[b])       | (UInt16(flashBlock[b + 1] & 0x0F) << 8)
+        let nY = UInt16(flashBlock[b + 1] >> 4) | (UInt16(flashBlock[b + 2]) << 4)
+        let mxX = UInt16(flashBlock[b + 3])      | (UInt16(flashBlock[b + 4] & 0x0F) << 8)
+        let mxY = UInt16(flashBlock[b + 4] >> 4) | (UInt16(flashBlock[b + 5]) << 4)
+        let mnX = UInt16(flashBlock[b + 6])      | (UInt16(flashBlock[b + 7] & 0x0F) << 8)
+        let mnY = UInt16(flashBlock[b + 7] >> 4) | (UInt16(flashBlock[b + 8]) << 4)
+        return StickCalibration(neutralX: nX, neutralY: nY, maxX: mxX, maxY: mxY, minX: mnX, minY: mnY)
+    }
+
     var bleMatcher: BLEMatcher? {
         let responseHandles = [NS2Handle.commandResponse1, NS2Handle.commandResponse2]
         let responseChannels: [ResponseChannel] = responseHandles.compactMap { h in
@@ -137,6 +174,8 @@ struct NS2GameCubeProfile: ControllerProfile {
             initCommands: [
                 Self.handshakeCommand,
                 Self.factoryDataReadCommand,
+                Self.leftStickCalibrationReadCommand,
+                Self.rightStickCalibrationReadCommand,
                 Self.firmwareInfoCommand,
                 Self.connectionVibrationCommand,
                 Self.player1LEDCommand,
@@ -187,17 +226,17 @@ struct NS2GameCubeProfile: ControllerProfile {
         return Data(bytes)
     }
 
-    func parseBLEReport(_ data: Data) -> ControllerState? {
+    func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState? {
         guard data.count >= 62 else { return nil }
-        return Self.parse0x05(data, offset: 0)
+        return Self.parse0x05(data, offset: 0, calibration: calibration)
     }
 
-    func parseUSBReport(_ data: Data, reportID: UInt8) -> ControllerState? {
+    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: StickCalibrationPair) -> ControllerState? {
         guard reportID == 0x05, data.count >= 62 else { return nil }
-        return Self.parse0x05(data, offset: 0)
+        return Self.parse0x05(data, offset: 0, calibration: calibration)
     }
 
-    static func parse0x05(_ data: Data, offset: Int) -> ControllerState {
+    static func parse0x05(_ data: Data, offset: Int, calibration: StickCalibrationPair) -> ControllerState {
         let base = data.startIndex.advanced(by: offset)
         let (lx, ly) = stickXY(data, at: base + 10)
         let (rx, ry) = stickXY(data, at: base + 13)
@@ -226,8 +265,10 @@ struct NS2GameCubeProfile: ControllerProfile {
         if btn & (1 << 23) != 0 { buttons.insert(.zl) }
 
         return ControllerState(
-            leftStick:  SIMD2(stick8(lx), stick8(ly, invert: true)),
-            rightStick: SIMD2(stick8(rx), stick8(ry, invert: true)),
+            leftStick:  SIMD2(stickAxis(lx, calibration.left, axis: .x),
+                              stickAxis(ly, calibration.left, axis: .y, invert: true)),
+            rightStick: SIMD2(stickAxis(rx, calibration.right, axis: .x),
+                              stickAxis(ry, calibration.right, axis: .y, invert: true)),
             triggerL: data[base + 60],
             triggerR: data[base + 61],
             buttons: buttons,
@@ -243,9 +284,36 @@ struct NS2GameCubeProfile: ControllerProfile {
         return (b0 | ((b1 & 0x0F) << 8), (b1 >> 4) | (b2 << 4))
     }
 
-    static func stick8(_ axis12: UInt16, invert: Bool = false) -> Int8 {
-        let v = (Int(axis12) - 2048) >> 3
-        let s = invert ? -v : v
-        return Int8(clamping: s)
+    enum StickAxis { case x, y }
+
+    // Apply per-stick factory calibration if available; otherwise fall back to a centered
+    // linear map. Calibration math mirrors SDL's MapJoystickAxis
+    // (libsdl-org/SDL: src/joystick/hidapi/SDL_hidapi_switch2.c): translate by neutral,
+    // divide by the per-side extent, scale to Int8 range, clamp.
+    static func stickAxis(_ raw: UInt16, _ cal: StickCalibration?, axis: StickAxis, invert: Bool = false) -> Int8 {
+        let neutral: UInt16
+        let maxAbove: UInt16
+        let maxBelow: UInt16
+        if let c = cal {
+            switch axis {
+            case .x: neutral = c.neutralX; maxAbove = c.maxX; maxBelow = c.minX
+            case .y: neutral = c.neutralY; maxAbove = c.maxY; maxBelow = c.minY
+            }
+        } else {
+            neutral = 0; maxAbove = 0; maxBelow = 0
+        }
+        let scaled: Int
+        if neutral != 0 && maxAbove != 0 && maxBelow != 0 {
+            let delta = Int(raw) - Int(neutral)
+            if delta >= 0 {
+                scaled = (delta * 127) / Int(maxAbove)
+            } else {
+                scaled = (delta * 127) / Int(maxBelow)
+            }
+        } else {
+            scaled = (Int(raw) - 2048) >> 3
+        }
+        let signed = invert ? -scaled : scaled
+        return Int8(clamping: signed)
     }
 }

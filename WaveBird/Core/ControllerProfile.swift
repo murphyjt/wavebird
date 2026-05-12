@@ -11,8 +11,24 @@ protocol ControllerProfile: Sendable {
     var hidProductID: UInt16 { get }
 
     func buildHIDReport(_ state: ControllerState) -> Data
-    func parseBLEReport(_ data: Data) -> ControllerState?
-    func parseUSBReport(_ data: Data, reportID: UInt8) -> ControllerState?
+    func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState?
+    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: StickCalibrationPair) -> ControllerState?
+}
+
+// Per-axis stick calibration extracted from controller flash. All values are in the
+// raw 12-bit ADC space. `max` is the deflection above `neutral`, `min` is below.
+struct StickCalibration: Sendable, Equatable {
+    var neutralX: UInt16
+    var neutralY: UInt16
+    var maxX: UInt16
+    var maxY: UInt16
+    var minX: UInt16
+    var minY: UInt16
+}
+
+struct StickCalibrationPair: Sendable, Equatable {
+    var left: StickCalibration? = nil
+    var right: StickCalibration? = nil
 }
 
 struct BLEMatcher: Sendable {
