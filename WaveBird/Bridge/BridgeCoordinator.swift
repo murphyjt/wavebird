@@ -18,6 +18,8 @@ struct DeviceRecord: Identifiable {
     var connectionState: DeviceConnectionState
     var virtualHID: VirtualHIDDevice?
     var reportRate: Double = 0
+    var serial: String? = nil
+    var firmware: FirmwareInfo? = nil
 }
 
 @MainActor
@@ -145,9 +147,49 @@ final class BridgeCoordinator {
                 await vhid.activate()
                 devices[id]?.virtualHID = vhid
             }
-            if let t = transport(for: kind) {
-                Task { [weak self] in await self?.logFirmwareInfo(id: id, transport: t) }
+        case .commandResponse(let id, let request, let response):
+            FileHandle.standardError.write(Data("[ble] cmd:           \(hex(request))\n".utf8))
+            if let response {
+                let label = response.sourceHandle.map { String(format: "resp 0x%04X", $0) } ?? "resp       "
+                FileHandle.standardError.write(Data("[ble] \(label): \(hex(response.data))\n".utf8))
+                switch request.first {
+                case 0x02:
+                    // Strip 8-byte ACK header + 8-byte read-info to get the flash data.
+                    let flashData = response.data.dropFirst(16)
+                    // cmd 0x02/0x04 request: read address is little-endian at bytes [12..15].
+                    var address = 0
+                    if request.count >= 16 {
+                        let b = request.startIndex
+                        address = Int(request[b + 12])
+                            | (Int(request[b + 13]) << 8)
+                            | (Int(request[b + 14]) << 16)
+                            | (Int(request[b + 15]) << 24)
+                    }
+                    FileHandle.standardError.write(Data("[ble] flash data:\n".utf8))
+                    for line in hexdumpLines(flashData, baseOffset: address) {
+                        FileHandle.standardError.write(Data("[ble]   \(line)\n".utf8))
+                    }
+                    if let serial = NS2GameCubeProfile.parseSerial(flashData) {
+                        devices[id]?.serial = serial
+                        FileHandle.standardError.write(Data("[ble] serial:        \(serial)\n".utf8))
+                    }
+                case 0x10:
+                    // Strip 8-byte ACK header to get the firmware payload.
+                    let payload = response.data.dropFirst(8)
+                    if let info = NS2GameCubeProfile.parseFirmwareInfo(payload) {
+                        devices[id]?.firmware = info
+                        FileHandle.standardError.write(Data("[ble] firmware:      \(info)\n".utf8))
+                    }
+                default:
+                    break
+                }
+            } else {
+                FileHandle.standardError.write(Data("[ble] resp:          (none)\n".utf8))
             }
+
+        case .unmatchedResponse(_, let data, let sourceHandle):
+            let label = sourceHandle.map { String(format: "0x%04X", $0) } ?? "?"
+            FileHandle.standardError.write(Data("[ble] orphan \(label): \(hex(data))\n".utf8))
 
         case .disconnected(let id, _):
             devices[id]?.connectionState = .disconnected
@@ -179,23 +221,29 @@ final class BridgeCoordinator {
         if log.count > 200 { log.removeFirst(log.count - 200) }
     }
 
-    private func logFirmwareInfo(id: DeviceID, transport: any Transport) async {
-        let response: Data?
-        do {
-            response = try await transport.sendAwaitingResponse(
-                NS2GameCubeProfile.firmwareInfoCommand,
-                to: id,
-                timeout: .milliseconds(300)
-            )
-        } catch {
-            appendLog("firmware: \(error)")
-            return
+    private func hex(_ data: Data) -> String {
+        data.map { String(format: "%02X", $0) }.joined(separator: " ")
+    }
+
+    // Classic hexdump-style: `<OFFSET>: AA BB CC ... |ascii|`, 16 bytes per row.
+    // baseOffset shifts the displayed offset so the column reflects an absolute address.
+    private func hexdumpLines(_ data: Data, baseOffset: Int = 0) -> [String] {
+        var lines: [String] = []
+        let bytes = Array(data)
+        var offset = 0
+        while offset < bytes.count {
+            let chunk = Array(bytes[offset..<min(offset + 16, bytes.count)])
+            let first = chunk.prefix(8).map { String(format: "%02X", $0) }.joined(separator: " ")
+            let second = chunk.dropFirst(8).map { String(format: "%02X", $0) }.joined(separator: " ")
+            let hex = first + (second.isEmpty ? "" : "  " + second)
+            let ascii = String(chunk.map {
+                (0x20...0x7E).contains($0) ? Character(UnicodeScalar($0)) : "."
+            })
+            let padded = hex.padding(toLength: 48, withPad: " ", startingAt: 0)
+            lines.append("\(String(format: "0x%06X", baseOffset + offset)): \(padded) |\(ascii)|")
+            offset += 16
         }
-        guard let response, let info = NS2GameCubeProfile.parseFirmwareInfo(response) else {
-            appendLog("firmware: no response")
-            return
-        }
-        appendLog("firmware: \(info)")
+        return lines
     }
 
     private func profile(forProductID pid: UInt16, kind: TransportKind) -> (any ControllerProfile)? {

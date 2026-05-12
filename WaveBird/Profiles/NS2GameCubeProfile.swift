@@ -26,42 +26,78 @@ struct FirmwareInfo: Sendable, CustomStringConvertible {
 struct NS2GameCubeProfile: ControllerProfile {
     let name = "Nintendo GameCube Controller"
 
+    // Cmd 0x07/0x01 — "unknown" handshake. Always the first command sent.
+    static let handshakeCommand = Data([
+        0x07, 0x91, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
+    ])
+
+    // Cmd 0x02/0x04 — read 0x40 bytes from flash 0x13000 (factory block: serial + more).
+    static let factoryDataReadCommand = Data([
+        0x02, 0x91, 0x01, 0x04, 0x00, 0x08, 0x00, 0x00,
+        0x40, 0x7E, 0x00, 0x00, 0x00, 0x30, 0x01, 0x00,
+    ])
+
+    // Cmd 0x10/0x01 — get firmware version info.
     static let firmwareInfoCommand = Data([
         0x10, 0x91, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
     ])
 
-    // Response: 8-byte ACK header + payload at offset 8.
-    //   [8..10] controller fw major.minor.micro
-    //   [11]    controller type (0x03 = GameCube)
-    //   [12..14] Bluetooth patch major.minor.micro
-    static func parseFirmwareInfo(_ data: Data) -> FirmwareInfo? {
-        guard data.count >= 15 else { return nil }
-        let b = data.startIndex
+    // Cmd 0x0A/0x02 — play vibration sample 0x03 ("connection" tone).
+    static let connectionVibrationCommand = Data([
+        0x0A, 0x91, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00,
+        0x03, 0x00, 0x00, 0x00,
+    ])
+
+    // Cmd 0x09/0x07 — set LED bitmask to Player 1.
+    static let player1LEDCommand = Data([
+        0x09, 0x91, 0x01, 0x07, 0x00, 0x08, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ])
+
+    // Input: the cmd 0x10/0x01 response payload (response with 8-byte ACK header stripped).
+    //   [0..2] controller fw major.minor.micro
+    //   [3]    controller type (0x03 = GameCube)
+    //   [4..6] Bluetooth patch major.minor.micro
+    //   [7]    padding; [8..] DSP firmware (Pro only)
+    static func parseFirmwareInfo(_ payload: Data) -> FirmwareInfo? {
+        guard payload.count >= 7 else { return nil }
+        let b = payload.startIndex
         return FirmwareInfo(
-            controllerVersion: (data[b + 8], data[b + 9], data[b + 10]),
-            controllerType: data[b + 11],
-            bluetoothPatch: (data[b + 12], data[b + 13], data[b + 14])
+            controllerVersion: (payload[b + 0], payload[b + 1], payload[b + 2]),
+            controllerType: payload[b + 3],
+            bluetoothPatch: (payload[b + 4], payload[b + 5], payload[b + 6])
         )
     }
 
+    // Input: the 0x40-byte flash block read from 0x13000 (response with ACK + read-info stripped).
+    //   [0..1] record marker (01 00)
+    //   [2..16] 15-byte ASCII serial number
+    static func parseSerial(_ flashData: Data) -> String? {
+        guard flashData.count >= 17 else { return nil }
+        let b = flashData.startIndex
+        let field = flashData[(b + 2)..<(b + 17)]
+        let printable = field.prefix(while: { (0x20...0x7E).contains($0) })
+        guard !printable.isEmpty else { return nil }
+        return String(decoding: printable, as: UTF8.self)
+    }
+
     var bleMatcher: BLEMatcher? {
-        BLEMatcher(
+        let responseHandles = [NS2Handle.commandResponse1, NS2Handle.commandResponse2]
+        let responseChannels: [ResponseChannel] = responseHandles.compactMap { h in
+            NS2Handle.uuid(h, for: .gameCube).map { ResponseChannel(uuid: $0, handle: h) }
+        }
+        return BLEMatcher(
             productID: 0x2073,
             serviceUUID: CBUUID(string: "AB7DE9BE-89FE-49AD-828F-118F09DF7FD0"),
             inputCharacteristic: CBUUID(string: "AB7DE9BE-89FE-49AD-828F-118F09DF7FD2"),
-            outputCharacteristic: CBUUID(string: "649D4AC9-8EB7-4E6C-AF44-1EA54FE5F005"),
-            responseCharacteristic: CBUUID(string: "C765A961-D9D8-4D36-A20A-5315B111836A"),
+            outputCharacteristic: NS2Handle.uuid(NS2Handle.commandWriteShared, for: .gameCube),
+            responseCharacteristics: responseChannels,
             initCommands: [
-                // Play vibration sample 0x03 "connection" (cmd 0x0A, subcmd 0x02).
-                Data([
-                    0x0A, 0x91, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00,
-                    0x03, 0x00, 0x00, 0x00,
-                ]),
-                // Player 1 LED via setLEDPattern (cmd 0x09, subcmd 0x07).
-                Data([
-                    0x09, 0x91, 0x01, 0x07, 0x00, 0x08, 0x00, 0x00,
-                    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                ]),
+                Self.handshakeCommand,
+                Self.factoryDataReadCommand,
+                Self.firmwareInfoCommand,
+                Self.connectionVibrationCommand,
+                Self.player1LEDCommand,
             ]
         )
     }

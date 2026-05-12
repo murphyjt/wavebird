@@ -20,8 +20,13 @@ struct BLEMatcher: Sendable {
     let serviceUUID: CBUUID
     let inputCharacteristic: CBUUID
     let outputCharacteristic: CBUUID?
-    let responseCharacteristic: CBUUID?
+    let responseCharacteristics: [ResponseChannel]
     let initCommands: [Data]
+}
+
+struct ResponseChannel: Sendable {
+    let uuid: CBUUID
+    let handle: UInt16
 }
 
 struct USBMatcher: Sendable {

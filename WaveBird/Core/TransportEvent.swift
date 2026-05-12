@@ -15,6 +15,11 @@ enum DisconnectReason: Sendable {
     case unknown
 }
 
+struct CommandResponseFrame: Sendable {
+    let data: Data
+    let sourceHandle: UInt16?
+}
+
 enum TransportEvent: Sendable {
     case discovered(DeviceID, AdvertisementInfo)
     case connecting(DeviceID)
@@ -22,5 +27,7 @@ enum TransportEvent: Sendable {
     case ready(DeviceID)
     case disconnected(DeviceID, DisconnectReason)
     case reportReceived(DeviceID, reportID: UInt8?, Data)
+    case commandResponse(DeviceID, request: Data, response: CommandResponseFrame?)
+    case unmatchedResponse(DeviceID, Data, sourceHandle: UInt16?)
     case error(DeviceID?, String)
 }
