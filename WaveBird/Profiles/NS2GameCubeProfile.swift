@@ -37,6 +37,14 @@ struct NS2GameCubeProfile: ControllerProfile {
         0x40, 0x7E, 0x00, 0x00, 0x00, 0x30, 0x01, 0x00,
     ])
 
+    // Cmd 0x02/0x04 — read 2 bytes from flash 0x13140: left/right trigger rest position.
+    // Address and parse offsets come from SDL's HIDAPI Switch2 driver
+    // (libsdl-org/SDL: src/joystick/hidapi/SDL_hidapi_switch2.c).
+    static let triggerCalibrationReadCommand = Data([
+        0x02, 0x91, 0x01, 0x04, 0x00, 0x08, 0x00, 0x00,
+        0x02, 0x7E, 0x00, 0x00, 0x40, 0x31, 0x01, 0x00,
+    ])
+
     // Cmd 0x10/0x01 — get firmware version info.
     static let firmwareInfoCommand = Data([
         0x10, 0x91, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
@@ -55,6 +63,16 @@ struct NS2GameCubeProfile: ControllerProfile {
     static let enableFeaturesCommand = Data([
         0x0C, 0x91, 0x01, 0x04, 0x00, 0x04, 0x00, 0x00,
         featureMask, 0x00, 0x00, 0x00,
+    ])
+
+    // Cmd 0x0A/0x08 — "send vibration data". Format not publicly documented; purpose during
+    // init is unverified. Both SDL ("Set rumble data?") and BlueRetro send this same payload
+    // before turning on the feature mask, so we mirror it.
+    static let sendVibrationDataCommand = Data([
+        0x0A, 0x91, 0x01, 0x08, 0x00, 0x14, 0x00, 0x00,
+        0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0x35, 0x00, 0x46, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
     ])
 
     // Cmd 0x0A/0x02 — play vibration sample 0x03 ("connection" tone).
@@ -96,6 +114,15 @@ struct NS2GameCubeProfile: ControllerProfile {
         return String(decoding: printable, as: UTF8.self)
     }
 
+    // Input: the 2-byte flash slice read from 0x13140 (response with ACK + read-info stripped).
+    //   [0] left trigger rest position, [1] right trigger rest position
+    // Layout from SDL (libsdl-org/SDL: src/joystick/hidapi/SDL_hidapi_switch2.c).
+    static func parseTriggerZeros(_ flashData: Data) -> (left: UInt8, right: UInt8)? {
+        guard flashData.count >= 2 else { return nil }
+        let b = flashData.startIndex
+        return (flashData[b], flashData[b + 1])
+    }
+
     var bleMatcher: BLEMatcher? {
         let responseHandles = [NS2Handle.commandResponse1, NS2Handle.commandResponse2]
         let responseChannels: [ResponseChannel] = responseHandles.compactMap { h in
@@ -111,10 +138,12 @@ struct NS2GameCubeProfile: ControllerProfile {
                 Self.handshakeCommand,
                 Self.factoryDataReadCommand,
                 Self.firmwareInfoCommand,
-                Self.setFeatureMaskCommand,
-                Self.enableFeaturesCommand,
                 Self.connectionVibrationCommand,
                 Self.player1LEDCommand,
+                Self.setFeatureMaskCommand,
+                Self.triggerCalibrationReadCommand,
+                Self.sendVibrationDataCommand,
+                Self.enableFeaturesCommand,
             ]
         )
     }

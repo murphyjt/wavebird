@@ -93,9 +93,13 @@ struct ContentView: View {
             }
             Spacer()
             if record.connectionState == .ready, record.reportRate > 0 {
-                Text("\(Int(record.reportRate)) Hz")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text("\(Int(record.reportRate)) Hz")
+                    Text("(\(Int(record.controllerRate)) ctrl)")
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
             }
         }
         .padding(12)

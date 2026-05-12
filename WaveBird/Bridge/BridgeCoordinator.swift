@@ -17,9 +17,11 @@ struct DeviceRecord: Identifiable {
     var advertisement: AdvertisementInfo
     var connectionState: DeviceConnectionState
     var virtualHID: VirtualHIDDevice?
-    var reportRate: Double = 0
+    var reportRate: Double = 0       // reports received per second over BLE
+    var controllerRate: Double = 0   // counter ticks produced by the controller per second
     var serial: String? = nil
     var firmware: FirmwareInfo? = nil
+    var triggerZeros: (left: UInt8, right: UInt8)? = nil
 }
 
 @MainActor
@@ -41,6 +43,12 @@ final class BridgeCoordinator {
 
     @ObservationIgnored
     private var reportCounts: [DeviceID: Int] = [:]
+
+    @ObservationIgnored
+    private var lastCounter: [DeviceID: UInt32] = [:]
+
+    @ObservationIgnored
+    private var counterDeltas: [DeviceID: Int] = [:]
 
     init(profiles: [any ControllerProfile], transports: [any Transport]) {
         self.profiles = profiles
@@ -81,7 +89,14 @@ final class BridgeCoordinator {
         for id in devices.keys where reportCounts[id] == nil {
             devices[id]?.reportRate = 0
         }
+        for (id, delta) in counterDeltas {
+            devices[id]?.controllerRate = Double(delta)
+        }
+        for id in devices.keys where counterDeltas[id] == nil {
+            devices[id]?.controllerRate = 0
+        }
         reportCounts.removeAll(keepingCapacity: true)
+        counterDeltas.removeAll(keepingCapacity: true)
     }
 
     func toggleScan() async {
@@ -169,9 +184,19 @@ final class BridgeCoordinator {
                     for line in hexdumpLines(flashData, baseOffset: address) {
                         FileHandle.standardError.write(Data("[ble]   \(line)\n".utf8))
                     }
-                    if let serial = NS2GameCubeProfile.parseSerial(flashData) {
-                        devices[id]?.serial = serial
-                        FileHandle.standardError.write(Data("[ble] serial:        \(serial)\n".utf8))
+                    switch address {
+                    case 0x13000:
+                        if let serial = NS2GameCubeProfile.parseSerial(flashData) {
+                            devices[id]?.serial = serial
+                            FileHandle.standardError.write(Data("[ble] serial:        \(serial)\n".utf8))
+                        }
+                    case 0x13140:
+                        if let zeros = NS2GameCubeProfile.parseTriggerZeros(flashData) {
+                            devices[id]?.triggerZeros = zeros
+                            FileHandle.standardError.write(Data("[ble] trigger zeros: L=\(zeros.left) R=\(zeros.right)\n".utf8))
+                        }
+                    default:
+                        break
                     }
                 case 0x10:
                     // Strip 8-byte ACK header to get the firmware payload.
@@ -195,20 +220,42 @@ final class BridgeCoordinator {
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
             devices[id]?.reportRate = 0
+            devices[id]?.controllerRate = 0
             reportCounts[id] = nil
+            counterDeltas[id] = nil
+            lastCounter[id] = nil
 
         case .reportReceived(let id, let reportID, let data):
             guard let record = devices[id] else { return }
             lastReportSnapshot = ReportSnapshot(deviceID: id, data: data)
             reportCounts[id, default: 0] += 1
+            // 32-bit LE counter at the head of the input report. Accumulate the per-report
+            // delta so we can compare BLE delivery rate against controller production rate.
+            if data.count >= 4 {
+                let b = data.startIndex
+                let counter = UInt32(data[b])
+                    | (UInt32(data[b + 1]) << 8)
+                    | (UInt32(data[b + 2]) << 16)
+                    | (UInt32(data[b + 3]) << 24)
+                if let prev = lastCounter[id] {
+                    counterDeltas[id, default: 0] += Int(counter &- prev)
+                }
+                lastCounter[id] = counter
+            }
             let parsed: ControllerState?
             switch kind {
             case .ble: parsed = record.profile.parseBLEReport(data)
             case .usb: parsed = record.profile.parseUSBReport(data, reportID: reportID ?? 0)
             }
-            if let state = parsed, let vhid = record.virtualHID {
-                let report = record.profile.buildHIDReport(state)
-                try? await vhid.dispatch(report)
+            if var state = parsed {
+                if let zeros = record.triggerZeros {
+                    state.triggerL = state.triggerL >= zeros.left ? state.triggerL - zeros.left : 0
+                    state.triggerR = state.triggerR >= zeros.right ? state.triggerR - zeros.right : 0
+                }
+                if let vhid = record.virtualHID {
+                    let report = record.profile.buildHIDReport(state)
+                    try? await vhid.dispatch(report)
+                }
             }
 
         case .error(_, let msg):

@@ -51,6 +51,8 @@ gamepads. This is a macOS limitation, not a bug.
   reference for Switch 2 controllers (Apache 2.0).
 - [switch2_controller_research](https://github.com/ndeadly/switch2_controller_research)
   by ndeadly — detailed write-ups of the Switch 2 BLE / HID protocol.
+- [SDL](https://github.com/libsdl-org/SDL) — `SDL_hidapi_switch2.c` for the
+  factory trigger-calibration flash layout (zlib).
 
 ## License
 
