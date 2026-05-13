@@ -3,7 +3,7 @@ import SwiftUI
 @main
 struct WaveBirdApp: App {
     @State private var coordinator = BridgeCoordinator(
-        profiles: [NS2GameCubeProfile()],
+        profiles: [NS2GameCubeProfile(), NS2ProControllerProfile()],
         transports: [BLETransport()]
     )
 

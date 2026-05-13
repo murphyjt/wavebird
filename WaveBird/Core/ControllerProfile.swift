@@ -13,6 +13,26 @@ protocol ControllerProfile: Sendable {
     func buildHIDReport(_ state: ControllerState) -> Data
     func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState?
     func parseUSBReport(_ data: Data, reportID: UInt8, calibration: StickCalibrationPair) -> ControllerState?
+
+    // Map the controller's native shoulder/trigger buttons onto the "standard"
+    // bumper + trigger roles that DS4/DualSense/Xbox/etc. all share. Spoof
+    // output profiles rely on this so e.g. GC's ZL (digital top-left) lands on
+    // L1, not L2 — even though both ZL and the Pro's L2-equivalent live in
+    // the same ButtonSet slot for parsing convenience.
+    func standardShoulders(_ state: ControllerState) -> StandardShoulders
+}
+
+// Cross-controller shoulder/trigger model. "Bumper" = top secondary, "trigger"
+// = bottom primary. Analog values come from state.triggerL/R for controllers
+// that have them (GC); for fully digital controllers (Pro) the analog field is
+// 0 / 0xFF based on the digital press.
+struct StandardShoulders: Sendable, Hashable {
+    var leftBumper: Bool
+    var rightBumper: Bool
+    var leftTriggerDigital: Bool
+    var rightTriggerDigital: Bool
+    var leftTriggerAnalog: UInt8
+    var rightTriggerAnalog: UInt8
 }
 
 // Per-axis stick calibration extracted from controller flash. All values are in the

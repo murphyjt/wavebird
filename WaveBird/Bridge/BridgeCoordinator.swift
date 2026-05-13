@@ -2,6 +2,10 @@ import CoreHID
 import Foundation
 import Observation
 
+@Sendable func stderrLog(_ line: String) {
+    FileHandle.standardError.write(Data("\(line)\n".utf8))
+}
+
 enum DeviceConnectionState: Sendable, Equatable {
     case discovered
     case connecting
@@ -23,6 +27,16 @@ struct DeviceRecord: Identifiable {
     var firmware: FirmwareInfo? = nil
     var triggerZeros: (left: UInt8, right: UInt8)? = nil
     var calibration = StickCalibrationPair()
+    var outputMode: HIDOutputMode
+    // Mode captured at the moment the virtual HID device was created. We
+    // intentionally keep using this instead of the record's live outputMode
+    // while republishing so reports keep matching the active descriptor.
+    var activeOutputMode: HIDOutputMode = .native
+    // Set when activeOutputMode == .switchPro. The spoof emulates Nintendo's
+    // BT subcommand handshake so Apple's driver binds GameController.framework,
+    // and produces live Report 0x3F/0x30 input depending on which mode the
+    // driver asked for.
+    var switchProSpoof: SwitchProSpoof?
 }
 
 @MainActor
@@ -34,7 +48,9 @@ final class BridgeCoordinator {
     private(set) var devices: [DeviceID: DeviceRecord] = [:]
     private(set) var isScanning = false
     private(set) var lastReportSnapshot: ReportSnapshot?
-    private(set) var log: [String] = []
+
+    private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
+    private let defaultOutputMode: HIDOutputMode
 
     @ObservationIgnored
     private var consumerTask: Task<Void, Never>?
@@ -54,6 +70,82 @@ final class BridgeCoordinator {
     init(profiles: [any ControllerProfile], transports: [any Transport]) {
         self.profiles = profiles
         self.transports = transports
+        let stored = UserDefaults.standard.string(forKey: Self.outputModeDefaultsKey)
+        self.defaultOutputMode = stored.flatMap(HIDOutputMode.init(rawValue:)) ?? .native
+    }
+
+    // Persist the new default for future devices, update this device's desired
+    // mode, and republish its virtual HID if it is currently active.
+    func setOutputMode(_ mode: HIDOutputMode, for id: DeviceID) async {
+        guard devices[id]?.outputMode != mode else { return }
+        devices[id]?.outputMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.outputModeDefaultsKey)
+        guard devices[id]?.virtualHID != nil else { return }
+        await republishVirtualHID(for: id, mode: mode)
+    }
+
+    private func output(for record: DeviceRecord, mode: HIDOutputMode) -> any HIDOutputProfile {
+        switch mode {
+        case .native:     return NativeOutput(profile: record.profile)
+        case .switchPro:  return SwitchProOutput()
+        case .dualShock4: return DualShock4Output()
+        case .dualSense:  return DualSenseOutput()
+        case .xboxSeries: return XboxSeriesOutput()
+        }
+    }
+
+    private func makeVirtualHID(for record: DeviceRecord, mode: HIDOutputMode) -> (VirtualHIDDevice, SwitchProSpoof?)? {
+        let out = output(for: record, mode: mode)
+        let spoof: SwitchProSpoof? = (mode == .switchPro) ? SwitchProSpoof(log: stderrLog) : nil
+        let onSetReport = makeSetReportHandler(spoof: spoof)
+        guard let vhid = VirtualHIDDevice(
+            descriptor: out.descriptor,
+            vendorID: out.vendorID,
+            productID: out.productID,
+            productName: out.productName,
+            manufacturer: out.manufacturer,
+            transport: hidTransport(for: record, mode: mode),
+            onSetReport: onSetReport
+        ) else { return nil }
+        return (vhid, spoof)
+    }
+
+    // Always-on diagnostic log for output reports the host sends us. For the
+    // Switch Pro spoof, also routes the request into the subcommand handler.
+    private func makeSetReportHandler(spoof: SwitchProSpoof?) -> VirtualHIDDevice.SetReportHandler {
+        return { [weak spoof] device, type, id, data in
+            let idStr = id.map { String(format: "0x%02X", $0.rawValue) } ?? "-"
+            let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+            stderrLog("[hid] setReport type=\(type) id=\(idStr) len=\(data.count) [\(hex)]")
+            if let spoof {
+                await spoof.handleSetReport(device: device, type: type, id: id, data: data)
+            }
+        }
+    }
+
+    private func hidTransport(for record: DeviceRecord, mode: HIDOutputMode) -> HIDDeviceTransport {
+        switch mode {
+        case .native:
+            return record.id.transport == .ble ? .bluetoothLowEnergy : .usb
+        case .switchPro, .dualShock4, .dualSense, .xboxSeries:
+            return .usb
+        }
+    }
+
+    private func republishVirtualHID(for id: DeviceID, mode: HIDOutputMode) async {
+        guard var record = devices[id] else { return }
+        record.virtualHID = nil
+        devices[id]?.virtualHID = nil
+        devices[id]?.switchProSpoof = nil
+        try? await Task.sleep(for: .milliseconds(150))
+        guard let (vhid, spoof) = makeVirtualHID(for: record, mode: mode) else {
+            devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+            return
+        }
+        await vhid.activate()
+        devices[id]?.virtualHID = vhid
+        devices[id]?.switchProSpoof = spoof
+        devices[id]?.activeOutputMode = mode
     }
 
     deinit {
@@ -134,7 +226,8 @@ final class BridgeCoordinator {
                     profile: profile,
                     advertisement: info,
                     connectionState: .discovered,
-                    virtualHID: nil
+                    virtualHID: nil,
+                    outputMode: defaultOutputMode
                 )
             }
             guard let t = transport(for: kind) else { return }
@@ -152,16 +245,14 @@ final class BridgeCoordinator {
 
         case .ready(let id):
             devices[id]?.connectionState = .ready
-            guard let profile = devices[id]?.profile else { return }
-            if let vhid = VirtualHIDDevice(
-                descriptor: profile.hidDescriptor,
-                vendorID: profile.hidVendorID,
-                productID: profile.hidProductID,
-                productName: profile.name,
-                transport: kind == .ble ? .bluetoothLowEnergy : .usb
-            ) {
+            guard let record = devices[id] else { return }
+            if let (vhid, spoof) = makeVirtualHID(for: record, mode: record.outputMode) {
                 await vhid.activate()
                 devices[id]?.virtualHID = vhid
+                devices[id]?.switchProSpoof = spoof
+                devices[id]?.activeOutputMode = record.outputMode
+            } else {
+                devices[id]?.connectionState = .failed("Failed to create virtual HID device")
             }
         case .commandResponse(let id, let request, let response):
             FileHandle.standardError.write(Data("[ble] cmd:           \(hex(request))\n".utf8))
@@ -187,7 +278,7 @@ final class BridgeCoordinator {
                     }
                     switch address {
                     case 0x13000:
-                        if let serial = NS2GameCubeProfile.parseSerial(flashData) {
+                        if let serial = NS2Responses.parseSerial(flashData) {
                             devices[id]?.serial = serial
                             FileHandle.standardError.write(Data("[ble] serial:        \(serial)\n".utf8))
                         }
@@ -197,12 +288,12 @@ final class BridgeCoordinator {
                             FileHandle.standardError.write(Data("[ble] trigger zeros: L=\(zeros.left) R=\(zeros.right)\n".utf8))
                         }
                     case 0x13080:
-                        if let cal = NS2GameCubeProfile.parseStickCalibration(flashData) {
+                        if let cal = NS2Responses.parseStickCalibration(flashData) {
                             devices[id]?.calibration.left = cal
                             FileHandle.standardError.write(Data("[ble] L stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
                         }
                     case 0x130C0:
-                        if let cal = NS2GameCubeProfile.parseStickCalibration(flashData) {
+                        if let cal = NS2Responses.parseStickCalibration(flashData) {
                             devices[id]?.calibration.right = cal
                             FileHandle.standardError.write(Data("[ble] R stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
                         }
@@ -212,7 +303,7 @@ final class BridgeCoordinator {
                 case 0x10:
                     // Strip 8-byte ACK header to get the firmware payload.
                     let payload = response.data.dropFirst(8)
-                    if let info = NS2GameCubeProfile.parseFirmwareInfo(payload) {
+                    if let info = NS2Responses.parseFirmwareInfo(payload) {
                         devices[id]?.firmware = info
                         FileHandle.standardError.write(Data("[ble] firmware:      \(info)\n".utf8))
                     }
@@ -230,6 +321,7 @@ final class BridgeCoordinator {
         case .disconnected(let id, _):
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
+            devices[id]?.switchProSpoof = nil
             devices[id]?.reportRate = 0
             devices[id]?.controllerRate = 0
             reportCounts[id] = nil
@@ -264,19 +356,20 @@ final class BridgeCoordinator {
                     state.triggerR = state.triggerR >= zeros.right ? state.triggerR - zeros.right : 0
                 }
                 if let vhid = record.virtualHID {
-                    let report = record.profile.buildHIDReport(state)
+                    let report: Data
+                    if let spoof = record.switchProSpoof {
+                        report = await spoof.buildReport(state, source: record.profile)
+                    } else {
+                        report = output(for: record, mode: record.activeOutputMode)
+                            .buildReport(state, source: record.profile)
+                    }
                     try? await vhid.dispatch(report)
                 }
             }
 
         case .error(_, let msg):
-            appendLog(msg)
+            stderrLog(msg)
         }
-    }
-
-    private func appendLog(_ line: String) {
-        log.append(line)
-        if log.count > 200 { log.removeFirst(log.count - 200) }
     }
 
     private func hex(_ data: Data) -> String {

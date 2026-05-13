@@ -57,11 +57,10 @@ actor BLETransport: Transport {
         let connected = central.retrieveConnectedPeripherals(withServices: services)
         for p in connected {
             peripherals[p.identifier] = p
-            if let m = matchers.first {
-                matcherByDevice[p.identifier] = m
-            }
+            guard let m = matchers.first else { continue }
+            matcherByDevice[p.identifier] = m
             let id = DeviceID(transport: .ble, raw: p.identifier)
-            let info = AdvertisementInfo(vendorID: 0x057E, productID: 0, localName: p.name, rssi: 0)
+            let info = AdvertisementInfo(vendorID: 0x057E, productID: m.productID, localName: p.name, rssi: 0)
             continuation.yield(.discovered(id, info))
         }
     }

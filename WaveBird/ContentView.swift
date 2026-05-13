@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var coordinator: BridgeCoordinator
-    @State private var showDiagnostics = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -13,10 +12,6 @@ struct ContentView: View {
                 deviceList
             }
             Spacer(minLength: 0)
-            DisclosureGroup("Diagnostics", isExpanded: $showDiagnostics) {
-                diagnosticsView.padding(.top, 8)
-            }
-            .font(.subheadline)
         }
         .padding(20)
         .frame(minWidth: 480, minHeight: 380)
@@ -85,10 +80,28 @@ struct ContentView: View {
                         .foregroundStyle(stateColor(record.connectionState))
                     if record.virtualHID != nil {
                         Text("•").foregroundStyle(.secondary)
-                        Text("HID active")
+                        Text("HID active: \(record.activeOutputMode.displayName)")
                             .font(.caption)
                             .foregroundStyle(.green)
                     }
+                }
+                HStack(spacing: 8) {
+                    Text("Present as")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Picker("", selection: Binding(
+                        get: { record.outputMode },
+                        set: { mode in
+                            Task { await coordinator.setOutputMode(mode, for: record.id) }
+                        }
+                    )) {
+                        ForEach(HIDOutputMode.allCases, id: \.self) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 220, alignment: .leading)
                 }
             }
             Spacer()
@@ -104,42 +117,6 @@ struct ContentView: View {
         }
         .padding(12)
         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var diagnosticsView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Last report")
-                    .font(.caption2).foregroundStyle(.secondary)
-                if let snap = coordinator.lastReportSnapshot {
-                    Text("\(snap.data.count) bytes")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    Text(snap.hexLines)
-                        .font(.system(.caption2, design: .monospaced))
-                        .lineLimit(nil)
-                        .textSelection(.enabled)
-                } else {
-                    Text("—").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Log").font(.caption2).foregroundStyle(.secondary)
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(coordinator.log.indices.reversed(), id: \.self) { i in
-                            Text(coordinator.log[i])
-                                .font(.system(.caption2, design: .monospaced))
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    .padding(6)
-                }
-                .frame(maxHeight: 140)
-                .background(Color.secondary.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-        }
     }
 
     private func stateLabel(_ s: DeviceConnectionState) -> String {
