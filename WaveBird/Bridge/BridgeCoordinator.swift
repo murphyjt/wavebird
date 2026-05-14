@@ -67,6 +67,27 @@ final class BridgeCoordinator {
     @ObservationIgnored
     private var counterDeltas: [DeviceID: Int] = [:]
 
+    // Per-device latest-state channels. The consumer yields parsed states here
+    // (non-blocking); a separate dispatch task picks up the newest and sends it
+    // to the virtual HID device. bufferingNewest(1) discards stale states if the
+    // dispatch task falls behind, so we always forward the most recent input.
+    @ObservationIgnored
+    private var stateContinuations: [DeviceID: AsyncStream<ControllerState>.Continuation] = [:]
+
+    @ObservationIgnored
+    private var dispatchTasks: [DeviceID: Task<Void, Never>] = [:]
+
+    // Prevents App Nap / background throttling while a controller is active.
+    // Wrapped so that deinit ends the activity regardless of isolation.
+    @ObservationIgnored
+    private var activity: ActivityToken?
+
+    private final class ActivityToken: @unchecked Sendable {
+        private let token: NSObjectProtocol
+        init(_ token: NSObjectProtocol) { self.token = token }
+        deinit { ProcessInfo.processInfo.endActivity(token) }
+    }
+
     init(profiles: [any ControllerProfile], transports: [any Transport]) {
         self.profiles = profiles
         self.transports = transports
@@ -153,10 +174,16 @@ final class BridgeCoordinator {
     deinit {
         consumerTask?.cancel()
         rateTask?.cancel()
+        for task in dispatchTasks.values { task.cancel() }
+        for cont in stateContinuations.values { cont.finish() }
     }
 
     func start() async {
         guard consumerTask == nil else { return }
+        activity = ActivityToken(ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "Controller input bridging"
+        ))
         let transports = self.transports
         consumerTask = Task { [weak self] in
             await withDiscardingTaskGroup { group in
@@ -210,6 +237,31 @@ final class BridgeCoordinator {
         }
     }
 
+    private func startDispatch(for id: DeviceID) {
+        dispatchTasks[id]?.cancel()
+        stateContinuations[id]?.finish()
+        let (stream, continuation) = AsyncStream.makeStream(of: ControllerState.self, bufferingPolicy: .bufferingNewest(1))
+        stateContinuations[id] = continuation
+        dispatchTasks[id] = Task { @MainActor [weak self] in
+            for await state in stream {
+                guard let self,
+                      let record = self.devices[id],
+                      let vhid = record.virtualHID else { continue }
+                let out = self.output(for: record, mode: record.activeOutputMode)
+                let report: Data
+                if let spoof = record.switchProSpoof {
+                    report = await spoof.buildReport(state, source: record.profile)
+                } else {
+                    report = out.buildReport(state, source: record.profile)
+                }
+                try? await vhid.dispatch(report)
+                for secondary in out.buildSecondaryReports(state, source: record.profile) {
+                    try? await vhid.dispatch(secondary)
+                }
+            }
+        }
+    }
+
     private func handle(_ event: TransportEvent, kind: TransportKind) async {
         switch event {
         case .discovered(let id, let info):
@@ -253,6 +305,7 @@ final class BridgeCoordinator {
                 devices[id]?.virtualHID = vhid
                 devices[id]?.switchProSpoof = spoof
                 devices[id]?.activeOutputMode = record.outputMode
+                startDispatch(for: id)
             } else {
                 devices[id]?.connectionState = .failed("Failed to create virtual HID device")
             }
@@ -321,6 +374,10 @@ final class BridgeCoordinator {
             FileHandle.standardError.write(Data("[ble] orphan \(label): \(hex(data))\n".utf8))
 
         case .disconnected(let id, _):
+            dispatchTasks[id]?.cancel()
+            dispatchTasks[id] = nil
+            stateContinuations[id]?.finish()
+            stateContinuations[id] = nil
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
             devices[id]?.switchProSpoof = nil
@@ -357,19 +414,7 @@ final class BridgeCoordinator {
                     state.triggerL = state.triggerL >= zeros.left ? state.triggerL - zeros.left : 0
                     state.triggerR = state.triggerR >= zeros.right ? state.triggerR - zeros.right : 0
                 }
-                if let vhid = record.virtualHID {
-                    let out = output(for: record, mode: record.activeOutputMode)
-                    let report: Data
-                    if let spoof = record.switchProSpoof {
-                        report = await spoof.buildReport(state, source: record.profile)
-                    } else {
-                        report = out.buildReport(state, source: record.profile)
-                    }
-                    try? await vhid.dispatch(report)
-                    for secondary in out.buildSecondaryReports(state, source: record.profile) {
-                        try? await vhid.dispatch(secondary)
-                    }
-                }
+                stateContinuations[id]?.yield(state)
             }
 
         case .error(_, let msg):
