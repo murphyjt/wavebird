@@ -104,6 +104,8 @@ final class BridgeCoordinator {
             productID: out.productID,
             productName: out.productName,
             manufacturer: out.manufacturer,
+            versionNumber: out.versionNumber,
+            serialNumber: record.serial,
             transport: hidTransport(for: record, mode: mode),
             onSetReport: onSetReport
         ) else { return nil }
@@ -356,14 +358,17 @@ final class BridgeCoordinator {
                     state.triggerR = state.triggerR >= zeros.right ? state.triggerR - zeros.right : 0
                 }
                 if let vhid = record.virtualHID {
+                    let out = output(for: record, mode: record.activeOutputMode)
                     let report: Data
                     if let spoof = record.switchProSpoof {
                         report = await spoof.buildReport(state, source: record.profile)
                     } else {
-                        report = output(for: record, mode: record.activeOutputMode)
-                            .buildReport(state, source: record.profile)
+                        report = out.buildReport(state, source: record.profile)
                     }
                     try? await vhid.dispatch(report)
+                    for secondary in out.buildSecondaryReports(state, source: record.profile) {
+                        try? await vhid.dispatch(secondary)
+                    }
                 }
             }
 

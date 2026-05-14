@@ -39,10 +39,12 @@ actor SwitchProSpoof {
         self.log = log
     }
 
-    // Process a Set Report request. We only act on Output Report 0x01
-    // (rumble + subcommand); 0x10/0x11/0x12 are rumble-only / NFC and we
-    // simply ack-silently. `device` is passed through so we can dispatch the
-    // matching Input Report 0x21 reply without holding a back-reference.
+    // Process a Set Report request. Output Report 0x01 carries Bluetooth
+    // rumble + subcommands and expects Input Report 0x21 replies. Output
+    // Report 0x80 is Nintendo's USB/proprietary command channel used by SDL
+    // and similar HIDAPI stacks; it expects Input Report 0x81 replies.
+    // `device` is passed through so we can dispatch the matching reply without
+    // holding a back-reference.
     //
     // The reply dispatch fires on a detached Task on purpose: CoreHID's
     // delegate caller awaits this method, and `dispatchInputReport` re-enters
@@ -61,12 +63,20 @@ actor SwitchProSpoof {
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {
         guard type == .output, let id else { return }
         let rid = id.rawValue
+        let base = data.startIndex
+        if rid == 0x80, data.count >= 2 {
+            let commandID = data[base + 1]
+            log("OUT 0x80 proprietary=0x\(String(format: "%02X", commandID))")
+            let reply = buildProprietaryReply(commandID: commandID)
+            Task { try? await device.dispatchInputReport(data: reply, timestamp: .now) }
+            return
+        }
+
         guard rid == 0x01, data.count >= 11 else {
             let hex = data.map { String(format: "%02X", $0) }.joined(separator: " ")
             log("OUT id=0x\(String(format: "%02X", rid)) len=\(data.count) [\(hex)] (ignored)")
             return
         }
-        let base = data.startIndex
         let counter = data[base + 1]
         let subcmdID = data[base + 10]
         let args = data.subdata(in: (base + 11)..<data.endIndex)
@@ -159,7 +169,9 @@ actor SwitchProSpoof {
         return buildReplyReport(ack: ack, subcmdID: subcmdID, payload: payload)
     }
 
-    // Input Report 0x21 (49 bytes on the wire = 1 ID + 48 payload):
+    // Input Report 0x21. The Switch Bluetooth payload is 49 bytes on the wire
+    // (1 ID + 48 payload), but USB/HIDAPI stacks expect max-size 64-byte
+    // reports even for this same subcommand-reply layout.
     //   0:      Report ID (0x21)
     //   1:      counter
     //   2:      battery + connection (0x90 = full + USB/charged)
@@ -171,7 +183,7 @@ actor SwitchProSpoof {
     //   14:     subcommand ID (echoed)
     //   15..48: subcommand reply payload (34 bytes)
     private func buildReplyReport(ack: UInt8, subcmdID: UInt8, payload: [UInt8]) -> Data {
-        var bytes = [UInt8](repeating: 0, count: 49)
+        var bytes = [UInt8](repeating: 0, count: 64)
         bytes[0] = 0x21
         bytes[1] = nextCounter()
         bytes[2] = 0x90
@@ -182,6 +194,40 @@ actor SwitchProSpoof {
         bytes[14] = subcmdID
         for i in 0..<min(payload.count, 34) {
             bytes[15 + i] = payload[i]
+        }
+        return Data(bytes)
+    }
+
+    // Input Report 0x81 is the reply to Output Report 0x80. SDL only checks
+    // bytes [0] and [1] for most commands; Status additionally carries the
+    // controller type and reversed MAC address.
+    private func buildProprietaryReply(commandID: UInt8) -> Data {
+        var bytes = [UInt8](repeating: 0, count: 64)
+        bytes[0] = 0x81
+        bytes[1] = commandID
+        switch commandID {
+        case 0x01:  // Status
+            bytes[2] = 0x00
+            bytes[3] = 0x03  // Pro Controller
+            bytes[4] = 0x56
+            bytes[5] = 0x34
+            bytes[6] = 0x12
+            bytes[7] = 0xE9
+            bytes[8] = 0xB6
+            bytes[9] = 0x98
+            log("proprietary 0x01: status")
+        case 0x02:
+            log("proprietary 0x02: handshake")
+        case 0x03:
+            log("proprietary 0x03: high speed")
+        case 0x04:
+            log("proprietary 0x04: force USB")
+        case 0x05:
+            log("proprietary 0x05: clear USB")
+        case 0x06:
+            log("proprietary 0x06: reset MCU")
+        default:
+            log("proprietary 0x\(String(format: "%02X", commandID)): ack")
         }
         return Data(bytes)
     }
@@ -312,7 +358,8 @@ actor SwitchProSpoof {
         return Data(bytes)
     }
 
-    // Report 0x30 (full input mode, 49 bytes on wire):
+    // Report 0x30 (full input mode). The useful Nintendo payload is the first
+    // 49 bytes; USB/HIDAPI clients expect the report padded to 64 bytes.
     //   0:      0x30
     //   1:      counter
     //   2:      battery + connection (0x90)
@@ -324,7 +371,7 @@ actor SwitchProSpoof {
     func buildFullReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
         let s = state.buttons
         let sh = source.standardShoulders(state)
-        var bytes = [UInt8](repeating: 0, count: 49)
+        var bytes = [UInt8](repeating: 0, count: 64)
         bytes[0] = 0x30
         bytes[1] = nextCounter()
         bytes[2] = 0x90
@@ -365,7 +412,6 @@ actor SwitchProSpoof {
         bytes[9]  = r0; bytes[10] = r1; bytes[11] = r2
         return Data(bytes)
     }
-
     // MARK: - Encoding helpers
 
     // Pack two 12-bit values into 3 bytes (Nintendo's stick wire format).

@@ -17,7 +17,9 @@ final class VirtualHIDDevice: Sendable {
         vendorID: UInt16,
         productID: UInt16,
         productName: String,
-        manufacturer: String = "Nintendo",
+        manufacturer: String? = "Nintendo",
+        versionNumber: UInt16 = 0x0001,
+        serialNumber: String? = nil,
         transport: HIDDeviceTransport = .bluetoothLowEnergy,
         onSetReport: SetReportHandler? = nil
     ) {
@@ -27,7 +29,9 @@ final class VirtualHIDDevice: Sendable {
             productID: UInt32(productID),
             transport: transport,
             product: productName,
-            manufacturer: manufacturer
+            manufacturer: manufacturer,
+            versionNumber: UInt64(versionNumber),
+            serialNumber: serialNumber,
         )
         guard let device = HIDVirtualDevice(properties: properties) else { return nil }
         self.device = device

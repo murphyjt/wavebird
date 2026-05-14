@@ -52,7 +52,12 @@ gamepads. This is a macOS limitation, not a bug.
 - [switch2_controller_research](https://github.com/ndeadly/switch2_controller_research)
   by ndeadly — detailed write-ups of the Switch 2 BLE / HID protocol.
 - [SDL](https://github.com/libsdl-org/SDL) — `SDL_hidapi_switch2.c` for the
-  factory trigger-calibration flash layout (zlib).
+  factory trigger-calibration flash layout; `SDL_hidapi_switch.c` for the
+  Switch 1 Pro Controller subcommand handshake the Switch Pro spoof
+  emulates (zlib).
+- [dekuNukem/Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering)
+  — write-up of the Switch 1 Bluetooth HID protocol (subcommand IDs, report
+  0x30 button/stick layout) used by the Switch Pro spoof.
 
 ## License
 

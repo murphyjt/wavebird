@@ -2,7 +2,7 @@
 import Foundation
 
 struct NS2ProControllerProfile: ControllerProfile {
-    let name = "Nintendo Switch Pro Controller 2"
+    let name = "Nintendo Switch 2 Pro Controller"
 
     // Pro reports buttons | analog | IMU | rumble + Pro-specific bit 0x08.
     // (GC uses 0x27; JoyCons use 0x37 which adds mouse 0x10.)

@@ -10,6 +10,7 @@ struct WaveBirdApp: App {
     var body: some Scene {
         WindowGroup("WaveBird") {
             ContentView(coordinator: coordinator)
+                .frame(minWidth: 600, maxWidth: 724)
                 .task {
                     await coordinator.start()
                     if !coordinator.isScanning {

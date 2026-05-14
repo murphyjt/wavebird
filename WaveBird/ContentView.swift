@@ -4,7 +4,7 @@ struct ContentView: View {
     @Bindable var coordinator: BridgeCoordinator
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 8) {
             header
             if coordinator.devices.isEmpty {
                 emptyState
@@ -20,11 +20,8 @@ struct ContentView: View {
     private var header: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("WaveBird")
-                    .font(.title3.weight(.semibold))
-                Text("Nintendo Switch 2 Controller bridge")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Controllers")
+                    .font(.headline)
             }
             Spacer()
             Image(systemName: "dot.radiowaves.left.and.right")
@@ -43,11 +40,11 @@ struct ContentView: View {
                 .foregroundStyle(.tertiary)
             Text("No controller connected")
                 .font(.headline)
-            Text("Hold the SYNC Button on the Nintendo Switch 2 Controller that you'd like to pair. Only the GameCube controller is supported in this version.")
+            Text("Hold the SYNC Button on the Nintendo Switch 2 Controller that you'd like to pair.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 400)
+                
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 36)
@@ -65,58 +62,56 @@ struct ContentView: View {
     private func deviceCard(_ record: DeviceRecord) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "gamecontroller.fill")
-                .font(.title2)
-                .foregroundStyle(record.virtualHID != nil ? .green : .secondary)
-                .frame(width: 36)
+                .font(.title3)
+                .foregroundStyle(record.virtualHID != nil ? .white : .black)
+                .frame(width: 30, height: 30)
+                .background(record.virtualHID != nil ? record.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed : Color.secondary)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(record.profile.name)
-                    .font(.subheadline.weight(.medium))
+                    .font(.default)
                 HStack(spacing: 6) {
                     Circle()
                         .fill(stateColor(record.connectionState))
-                        .frame(width: 7, height: 7)
+                        .frame(width: 10, height: 10)
                     Text(stateLabel(record.connectionState))
-                        .font(.caption)
-                        .foregroundStyle(stateColor(record.connectionState))
-                    if record.virtualHID != nil {
-                        Text("•").foregroundStyle(.secondary)
-                        Text("HID active: \(record.activeOutputMode.displayName)")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                }
-                HStack(spacing: 8) {
-                    Text("Present as")
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Picker("", selection: Binding(
-                        get: { record.outputMode },
-                        set: { mode in
-                            Task { await coordinator.setOutputMode(mode, for: record.id) }
+                    if record.connectionState == .ready, record.reportRate > 0 {
+                        HStack(spacing: 4) {
+                            Text("•").foregroundStyle(.secondary)
+                            Text("\(Int(record.reportRate)) Hz")
+                            Text("(\(Int(record.controllerRate)) ctrl)")
+                                .foregroundStyle(.tertiary)
                         }
-                    )) {
-                        ForEach(HIDOutputMode.allCases, id: \.self) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 220, alignment: .leading)
                 }
             }
             Spacer()
-            if record.connectionState == .ready, record.reportRate > 0 {
-                HStack(spacing: 4) {
-                    Text("\(Int(record.reportRate)) Hz")
-                    Text("(\(Int(record.controllerRate)) ctrl)")
-                        .foregroundStyle(.tertiary)
+            HStack(spacing: 8) {
+                Text("Present as")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("", selection: Binding(
+                    get: { record.outputMode },
+                    set: { mode in
+                        Task { await coordinator.setOutputMode(mode, for: record.id) }
+                    }
+                )) {
+                    ForEach(HIDOutputMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
                 }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .labelsHidden()
+                .pickerStyle(.menu)
             }
+            .fixedSize()
         }
-        .padding(12)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .padding(10)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func stateLabel(_ s: DeviceConnectionState) -> String {
@@ -133,8 +128,13 @@ struct ContentView: View {
         switch s {
         case .connected, .ready: .green
         case .connecting, .discovered: .orange
-        case .disconnected: .secondary
+        case .disconnected: .red
         case .failed: .red
         }
     }
+}
+
+extension Color {
+    static let nintendoRed = Color(red: 230/255, green: 0/255, blue: 18/255)
+    static let gamecubeIndigo = Color(red: 0.40, green: 0.40, blue: 0.67)
 }
