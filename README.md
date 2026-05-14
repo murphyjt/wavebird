@@ -57,6 +57,25 @@ xcodebuild -project WaveBird.xcodeproj -scheme WaveBird -configuration Debug bui
 
 Or open `WaveBird.xcodeproj` in Xcode and run.
 
+## Permissions
+
+WaveBird needs two privacy permissions the first time it runs. macOS may prompt
+for them automatically, or you can grant them manually:
+
+**System Settings → Privacy & Security → Accessibility** — required to publish
+a virtual HID gamepad.
+
+**System Settings → Privacy & Security → Bluetooth** — required to scan for and
+connect to controllers.
+
+If a permission prompt appears, click **Allow**. If WaveBird is listed but
+unchecked, check it and relaunch.
+
+> **Note:** If you granted permissions for a previous version and the virtual
+> gamepad stopped appearing after updating, open **Privacy & Security →
+> Accessibility**, remove WaveBird, and re-add it — macOS sometimes doesn't
+> re-validate an existing entry after a binary update.
+
 ## Use
 
 1. Launch the app — it begins scanning automatically.
