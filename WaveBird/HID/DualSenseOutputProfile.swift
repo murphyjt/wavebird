@@ -13,7 +13,7 @@ import Foundation
 //   9:    L1=0, R1=1, L2=2, R2=3, CREATE=4, OPTIONS=5, L3=6, R3=7
 //   10:   PS=0, TPad=1, Mute=2, vendor bits 3..7
 //   11..63: vendor-defined fields, left at 0
-struct DualSenseOutput: HIDOutputProfile {
+struct DualSenseOutput: HIDOutputProfile, HIDOutputSession {
     let vendorID: UInt16 = 0x054C
     let productID: UInt16 = 0x0CE6
     let productName = "DualSense Wireless Controller"
@@ -21,6 +21,8 @@ struct DualSenseOutput: HIDOutputProfile {
     let versionNumber: UInt16 = 0x0100
 
     var descriptor: Data { Self.descriptorBytes }
+
+    func makeSession() -> any HIDOutputSession { self }
 
     static let descriptorBytes: Data = Data([
         0x05, 0x01,
@@ -78,7 +80,7 @@ struct DualSenseOutput: HIDOutputProfile {
         0xC0,
     ])
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
+    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
         let s = state.buttons
         let sh = source.standardShoulders(state)
         var bytes = [UInt8](repeating: 0, count: 64)

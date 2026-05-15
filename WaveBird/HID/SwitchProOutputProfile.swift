@@ -133,61 +133,8 @@ struct SwitchProOutput: HIDOutputProfile {
         0xC0                     // End Collection
     ])
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
-        let s = state.buttons
-        let sh = source.standardShoulders(state)
-        var bytes = [UInt8](repeating: 0, count: 12)
-        bytes[0] = 0x3F  // Report ID — simple HID input mode
-
-        // Buttons: 16-bit LE bitmap. Switch button labels (A=east, B=south,
-        // X=north, Y=west). Shoulder roles via standardShoulders so GC's
-        // ZL/Z map to L/R (top digital) and L/R analog clicks map to ZL/ZR.
-        var b: UInt16 = 0
-        if s.contains(.b)         { b |= 1 << 0 }
-        if s.contains(.a)         { b |= 1 << 1 }
-        if s.contains(.y)         { b |= 1 << 2 }
-        if s.contains(.x)         { b |= 1 << 3 }
-        if sh.leftBumper          { b |= 1 << 4 }   // L
-        if sh.rightBumper         { b |= 1 << 5 }   // R
-        if sh.leftTriggerDigital  { b |= 1 << 6 }   // ZL
-        if sh.rightTriggerDigital { b |= 1 << 7 }   // ZR
-        if s.contains(.minus)     { b |= 1 << 8 }
-        if s.contains(.plus) || s.contains(.start) { b |= 1 << 9 }
-        if s.contains(.stickL)    { b |= 1 << 10 }
-        if s.contains(.stickR)    { b |= 1 << 11 }
-        if s.contains(.home)      { b |= 1 << 12 }
-        if s.contains(.capture)   { b |= 1 << 13 }
-        bytes[1] = UInt8(b & 0xFF)
-        bytes[2] = UInt8(b >> 8)
-
-        // Hat: 0=N, 1=NE, … 7=NW, 8=null. Real device uses 8 for neutral.
-        bytes[3] = SpoofEncode.hat(
-            up: s.contains(.dpadUp),
-            right: s.contains(.dpadRight),
-            down: s.contains(.dpadDown),
-            left: s.contains(.dpadLeft),
-            neutral: 0x08
-        ) & 0x0F
-
-        // Sticks: 16-bit unsigned 0..65535, neutral 0x8000. Y inverted because
-        // our internal convention is +Y=up; HID/Switch convention is +Y=down.
-        let lx = Self.axis16(state.leftStick.x)
-        let ly = Self.axis16(-Int(state.leftStick.y))
-        let rx = Self.axis16(state.rightStick.x)
-        let ry = Self.axis16(-Int(state.rightStick.y))
-        bytes[4]  = UInt8(lx & 0xFF); bytes[5]  = UInt8(lx >> 8)
-        bytes[6]  = UInt8(ly & 0xFF); bytes[7]  = UInt8(ly >> 8)
-        bytes[8]  = UInt8(rx & 0xFF); bytes[9]  = UInt8(rx >> 8)
-        bytes[10] = UInt8(ry & 0xFF); bytes[11] = UInt8(ry >> 8)
-        return Data(bytes)
-    }
-
-    // Map Int8 (-128..127) → UInt16 (0..65535), neutral at 0x8000.
-    // Positive side uses *258 so +127 lands at 0xFFFF (full range); negative
-    // side uses *256 so -128 lands at 0x0000 — same shape as the Xbox encoder.
-    private static func axis16(_ v: Int8) -> UInt16 { axis16(Int(v)) }
-    private static func axis16(_ value: Int) -> UInt16 {
-        if value >= 0 { return UInt16(clamping: 0x8000 + value * 258) }
-        else          { return UInt16(clamping: 0x8000 + value * 256) }
-    }
+    // SwitchPro needs a stateful session: macOS's driver drives a subcommand
+    // handshake and switches input report format from simple (0x3F) to full
+    // (0x30) mid-stream. SwitchProSession holds that mode + reply counter.
+    func makeSession() -> any HIDOutputSession { SwitchProSession(log: stderrLog) }
 }

@@ -1,4 +1,4 @@
-// Switch 1 Pro Controller spoof emulator.
+// SwitchProSession — the per-virtual-device session for Switch Pro spoof mode.
 //
 // macOS's AppleGameControllerPersonality driver matches Switch Pro by
 // VID/PID (0x057E/0x2009). When it sees the matching HID descriptor it
@@ -25,7 +25,7 @@
 import CoreHID
 import Foundation
 
-actor SwitchProSpoof {
+actor SwitchProSession: HIDOutputSession {
     enum InputMode: UInt8 {
         case simple = 0x3F
         case full   = 0x30
@@ -88,7 +88,7 @@ actor SwitchProSpoof {
 
     // Build the live input report. Layout depends on which mode the host has
     // put us into via subcommand 0x03.
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
+    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
         switch inputMode {
         case .simple: return buildSimpleReport(state, source: source)
         case .full:   return buildFullReport(state, source: source)

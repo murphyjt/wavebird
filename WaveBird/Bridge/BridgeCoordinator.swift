@@ -32,11 +32,10 @@ struct DeviceRecord: Identifiable {
     // intentionally keep using this instead of the record's live outputMode
     // while republishing so reports keep matching the active descriptor.
     var activeOutputMode: HIDOutputMode = .native
-    // Set when activeOutputMode == .switchPro. The spoof emulates Nintendo's
-    // BT subcommand handshake so Apple's driver binds GameController.framework,
-    // and produces live Report 0x3F/0x30 input depending on which mode the
-    // driver asked for.
-    var switchProSpoof: SwitchProSpoof?
+    // Per-virtual-device session created at .ready via the output profile's
+    // makeSession(). Stateless outputs return self; stateful spoofs (Switch
+    // Pro) return an actor that owns handshake/mode state for this connection.
+    var session: (any HIDOutputSession)?
 }
 
 @MainActor
@@ -115,10 +114,10 @@ final class BridgeCoordinator {
         }
     }
 
-    private func makeVirtualHID(for record: DeviceRecord, mode: HIDOutputMode) -> (VirtualHIDDevice, SwitchProSpoof?)? {
+    private func makeVirtualHID(for record: DeviceRecord, mode: HIDOutputMode) -> (VirtualHIDDevice, any HIDOutputSession)? {
         let out = output(for: record, mode: mode)
-        let spoof: SwitchProSpoof? = (mode == .switchPro) ? SwitchProSpoof(log: stderrLog) : nil
-        let onSetReport = makeSetReportHandler(spoof: spoof)
+        let session = out.makeSession()
+        let onSetReport = makeSetReportHandler(session: session)
         guard let vhid = VirtualHIDDevice(
             descriptor: out.descriptor,
             vendorID: out.vendorID,
@@ -130,19 +129,18 @@ final class BridgeCoordinator {
             transport: hidTransport(for: record, mode: mode),
             onSetReport: onSetReport
         ) else { return nil }
-        return (vhid, spoof)
+        return (vhid, session)
     }
 
-    // Always-on diagnostic log for output reports the host sends us. For the
-    // Switch Pro spoof, also routes the request into the subcommand handler.
-    private func makeSetReportHandler(spoof: SwitchProSpoof?) -> VirtualHIDDevice.SetReportHandler {
-        return { [weak spoof] device, type, id, data in
+    // Always-on diagnostic log for output reports the host sends us. Forwards
+    // the request to the session so stateful spoofs can dispatch handshake
+    // replies (e.g. Switch Pro subcommand → Input Report 0x21).
+    private func makeSetReportHandler(session: any HIDOutputSession) -> VirtualHIDDevice.SetReportHandler {
+        return { device, type, id, data in
             let idStr = id.map { String(format: "0x%02X", $0.rawValue) } ?? "-"
             let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
             stderrLog("[hid] setReport type=\(type) id=\(idStr) len=\(data.count) [\(hex)]")
-            if let spoof {
-                await spoof.handleSetReport(device: device, type: type, id: id, data: data)
-            }
+            await session.handleSetReport(device: device, type: type, id: id, data: data)
         }
     }
 
@@ -159,15 +157,15 @@ final class BridgeCoordinator {
         guard var record = devices[id] else { return }
         record.virtualHID = nil
         devices[id]?.virtualHID = nil
-        devices[id]?.switchProSpoof = nil
+        devices[id]?.session = nil
         try? await Task.sleep(for: .milliseconds(150))
-        guard let (vhid, spoof) = makeVirtualHID(for: record, mode: mode) else {
+        guard let (vhid, session) = makeVirtualHID(for: record, mode: mode) else {
             devices[id]?.connectionState = .failed("Failed to create virtual HID device")
             return
         }
         await vhid.activate()
         devices[id]?.virtualHID = vhid
-        devices[id]?.switchProSpoof = spoof
+        devices[id]?.session = session
         devices[id]?.activeOutputMode = mode
     }
 
@@ -246,16 +244,12 @@ final class BridgeCoordinator {
             for await state in stream {
                 guard let self,
                       let record = self.devices[id],
-                      let vhid = record.virtualHID else { continue }
-                let out = self.output(for: record, mode: record.activeOutputMode)
-                let report: Data
-                if let spoof = record.switchProSpoof {
-                    report = await spoof.buildReport(state, source: record.profile)
-                } else {
-                    report = out.buildReport(state, source: record.profile)
-                }
+                      let vhid = record.virtualHID,
+                      let session = record.session else { continue }
+                let report = await session.buildReport(state, source: record.profile)
                 try? await vhid.dispatch(report)
-                for secondary in out.buildSecondaryReports(state, source: record.profile) {
+                let secondaries = await session.buildSecondaryReports(state, source: record.profile)
+                for secondary in secondaries {
                     try? await vhid.dispatch(secondary)
                 }
             }
@@ -300,10 +294,10 @@ final class BridgeCoordinator {
         case .ready(let id):
             devices[id]?.connectionState = .ready
             guard let record = devices[id] else { return }
-            if let (vhid, spoof) = makeVirtualHID(for: record, mode: record.outputMode) {
+            if let (vhid, session) = makeVirtualHID(for: record, mode: record.outputMode) {
                 await vhid.activate()
                 devices[id]?.virtualHID = vhid
-                devices[id]?.switchProSpoof = spoof
+                devices[id]?.session = session
                 devices[id]?.activeOutputMode = record.outputMode
                 startDispatch(for: id)
             } else {
@@ -380,7 +374,7 @@ final class BridgeCoordinator {
             stateContinuations[id] = nil
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
-            devices[id]?.switchProSpoof = nil
+            devices[id]?.session = nil
             devices[id]?.reportRate = 0
             devices[id]?.controllerRate = 0
             reportCounts[id] = nil

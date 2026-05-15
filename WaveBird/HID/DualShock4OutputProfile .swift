@@ -16,7 +16,7 @@ import Foundation
 //   8: L2 analog
 //   9: R2 analog
 //   10..63: vendor-defined fields, left at 0
-struct DualShock4Output: HIDOutputProfile {
+struct DualShock4Output: HIDOutputProfile, HIDOutputSession {
     let vendorID: UInt16 = 0x054C
     let productID: UInt16 = 0x05C4
     let productName = "Wireless Controller"
@@ -24,6 +24,8 @@ struct DualShock4Output: HIDOutputProfile {
     let versionNumber: UInt16 = 0x0100
 
     var descriptor: Data { Self.descriptorBytes }
+
+    func makeSession() -> any HIDOutputSession { self }
 
     static let descriptorBytes: Data = Data([
         0x05, 0x01,
@@ -83,7 +85,7 @@ struct DualShock4Output: HIDOutputProfile {
         0xC0,
     ])
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
+    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
         let s = state.buttons
         let sh = source.standardShoulders(state)
         var bytes = [UInt8](repeating: 0, count: 64)

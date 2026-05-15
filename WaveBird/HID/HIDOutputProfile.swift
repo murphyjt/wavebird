@@ -1,12 +1,17 @@
+import CoreHID
 import Foundation
 
-// HIDOutputProfile decides what virtual HID device we present to macOS — its
-// VID/PID, descriptor, and how each ControllerState is encoded into a HID
-// report. The default `.native` mode delegates to the connected controller's
-// own ControllerProfile (so the GC controller reports as a GC controller, the
-// Pro as a Pro). The other modes spoof a well-known third-party controller
-// that GameController.framework, web Gamepad API, and most games already
-// have built-in mappings for.
+// HIDOutputProfile is the identity card for the virtual HID device we present
+// to macOS — its VID/PID, descriptor, and product strings. It does NOT build
+// reports; that's the session's job. The split lets stateful spoofs (e.g.
+// Switch Pro, which emulates Nintendo's subcommand handshake) share the same
+// dispatch path as stateless ones.
+//
+// The default `.native` mode delegates to the connected controller's own
+// ControllerProfile (so the GC controller reports as a GC controller, the Pro
+// as a Pro). The other modes spoof a well-known third-party controller that
+// GameController.framework, web Gamepad API, and most games already have
+// built-in mappings for.
 //
 // Spoofs map shoulders/triggers via ControllerProfile.standardShoulders so
 // GC's ZL/Z (digital top) land on the bumpers and L/R (analog clicks) land on
@@ -38,19 +43,34 @@ protocol HIDOutputProfile: Sendable {
     var manufacturer: String? { get }
     var versionNumber: UInt16 { get }
     var descriptor: Data { get }
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) -> Data
-    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) -> [Data]
+
+    // Construct the per-virtual-device session. Stateless outputs typically
+    // return `self` (dual-conforming to both protocols); stateful spoofs return
+    // a fresh actor instance so handshake state is scoped to one connection.
+    func makeSession() -> any HIDOutputSession
 }
 
-extension HIDOutputProfile {
-    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) -> [Data] { [] }
+// HIDOutputSession owns the per-connection mutable state and all the
+// per-state-update encoding. One session is created when a virtual HID device
+// is published and lives for that device's lifetime; the coordinator stores it
+// on DeviceRecord and routes both inbound state (buildReport) and outbound
+// host commands (handleSetReport) through it.
+protocol HIDOutputSession: Sendable {
+    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data
+    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data]
+    func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async
+}
+
+extension HIDOutputSession {
+    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data] { [] }
+    func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {}
 }
 
 // MARK: - Native passthrough
 
 // Delegates to a ControllerProfile so each connected controller advertises
 // itself with its real VID/PID and descriptor.
-struct NativeOutput: HIDOutputProfile {
+struct NativeOutput: HIDOutputProfile, HIDOutputSession {
     let profile: any ControllerProfile
 
     var vendorID: UInt16 { profile.hidVendorID }
@@ -60,7 +80,9 @@ struct NativeOutput: HIDOutputProfile {
     var versionNumber: UInt16 { 0x0001 }
     var descriptor: Data { profile.hidDescriptor }
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
+    func makeSession() -> any HIDOutputSession { self }
+
+    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
         profile.buildHIDReport(state)
     }
 }

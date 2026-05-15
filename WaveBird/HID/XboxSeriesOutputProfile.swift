@@ -29,7 +29,7 @@ import Foundation
 //   13:    low nibble hat (1=N, 2=NE, ... 8=NW, 0=neutral), high nibble padding
 //   14:    A=0, B=1, X=2, Y=3, LB=4, RB=5, View=6, Menu=7
 //   15:    L3=0, R3=1, bits 2..7 padding
-struct XboxSeriesOutput: HIDOutputProfile {
+struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
     let vendorID: UInt16 = 0x045E
     let productID: UInt16 = 0x0B13
     let productName = "Xbox Wireless Controller"
@@ -37,6 +37,8 @@ struct XboxSeriesOutput: HIDOutputProfile {
     let versionNumber: UInt16 = 0x050F
 
     var descriptor: Data { Self.descriptorBytes }
+
+    func makeSession() -> any HIDOutputSession { self }
 
     static let descriptorBytes: Data = Data([
         0x05, 0x01,
@@ -207,7 +209,7 @@ struct XboxSeriesOutput: HIDOutputProfile {
         0xC0,
     ])
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
+    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
         let s = state.buttons
         let sh = source.standardShoulders(state)
         var bytes = [UInt8](repeating: 0, count: 16)
@@ -280,7 +282,7 @@ struct XboxSeriesOutput: HIDOutputProfile {
     //
     // Share byte at state[14]: SDL reads this for Xbox Series X (has_share_button).
     // Our state is 15 bytes so [14] is in-bounds and zeroed (share button off).
-    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) -> [Data] {
+    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data] {
         let s = state.buttons
         let sh = source.standardShoulders(state)
         var bytes = [UInt8](repeating: 0, count: 19)
