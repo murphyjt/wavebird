@@ -1,3 +1,4 @@
+import CoreHID
 import Foundation
 
 // Sony DualSense (CFI-ZCT1, VID 0x054C / PID 0x0CE6). Report ID 0x01 matches
@@ -23,6 +24,19 @@ struct DualSenseOutput: HIDOutputProfile, HIDOutputSession {
     var descriptor: Data { Self.descriptorBytes }
 
     func makeSession() -> any HIDOutputSession { self }
+
+    // macOS sends rumble as USB Output Report 0x02:
+    //   [id, valid_flag0, valid_flag1, right_motor, left_motor, …haptic/lightbar]
+    // valid_flag0 bit 0 = "compatible rumble emulation" (DS_OUTPUT_VALID_FLAG0_
+    // COMPATIBLE_VIBRATION in Linux hid-playstation) — gates motor bytes [3..4].
+    // Host already drives ~30 Hz frames during a haptic burst; we don't refresh
+    // on our side, so when frames stop the NS2 motor times out naturally.
+    func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
+        guard type == .output, id?.rawValue == 0x02, data.count >= 5 else { return nil }
+        let b = data.startIndex
+        guard data[b + 1] & 0x01 != 0 else { return nil }
+        return RumbleCommand(leftAmp: data[b + 4], rightAmp: data[b + 3])
+    }
 
     static let descriptorBytes: Data = Data([
         0x05, 0x01,

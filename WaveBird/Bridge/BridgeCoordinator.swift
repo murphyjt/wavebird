@@ -147,16 +147,18 @@ final class BridgeCoordinator {
 
             if let cmd = session.parseRumble(type: type, id: id, data: data) {
                 rumbleRefresh.cancel()
-                if let payload = profile.encodeRumble(cmd) {
+                // Stamp a fresh counter on every outgoing command. GC/Pro dedupe
+                // byte-identical successive payloads, so the tid nibble must vary
+                // even when amplitude doesn't — including when the host drives the
+                // cadence itself (DS4/DualSense send ~30 Hz at constant amplitude).
+                if let payload = profile.encodeRumble(cmd.withCounter(rumbleRefresh.nextCounter())) {
                     try? await transport?.sendVibration(payload, to: deviceID)
                 }
                 if let interval = cmd.refreshInterval, !cmd.isStop {
                     rumbleRefresh.replace(with: Task {
-                        var counter = cmd.transmitCounter
                         while !Task.isCancelled {
                             try? await Task.sleep(for: interval)
-                            counter = counter &+ 1
-                            if let payload = profile.encodeRumble(cmd.withCounter(counter)) {
+                            if let payload = profile.encodeRumble(cmd.withCounter(rumbleRefresh.nextCounter())) {
                                 try? await transport?.sendVibration(payload, to: deviceID)
                             }
                         }
@@ -443,6 +445,7 @@ final class BridgeCoordinator {
 private final class RumbleRefreshBox: @unchecked Sendable {
     private let lock = NSLock()
     private var task: Task<Void, Never>?
+    private var counter: UInt8 = 0
 
     func replace(with newTask: Task<Void, Never>) {
         lock.withLock {
@@ -455,6 +458,16 @@ private final class RumbleRefreshBox: @unchecked Sendable {
         lock.withLock {
             task?.cancel()
             task = nil
+        }
+    }
+
+    // Monotonically increment the per-device transmit counter so successive
+    // GC/Pro vibration payloads differ in their tid nibble and the controller
+    // doesn't dedupe them. UInt8 wraparound is fine — only the low 4 bits matter.
+    func nextCounter() -> UInt8 {
+        lock.withLock {
+            counter = counter &+ 1
+            return counter
         }
     }
 }

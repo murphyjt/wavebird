@@ -210,17 +210,40 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         0xC0,
     ])
 
-    // SDL's Xbox HIDAPI driver sends rumble as USB report 0x09:
-    //   [id, 0x00, 0x00, 0x09, 0x00, 0x0F, LT, RT, LF, HF, …]
-    // NS2 Pro has no trigger motors, so fold trigger bytes into the main motor
-    // LRA by taking max(trigger, motor). Xbox sends start-then-stop ~1 s apart
-    // but the NS2 motor times out after ~300 ms, so we ask the coordinator to
-    // refresh the command every 80 ms until the next set-report arrives.
+    // Two rumble paths reach this spoof depending on who's driving:
+    //
+    // • Report 0x03 — macOS GCController.haptics drives the PID (Physical
+    //   Interface) descriptor block in our descriptor:
+    //     [id, enable(4-bit actuator mask), LT, RT, L, R, duration, delay, loop]
+    //
+    // • Report 0x09 — SDL's Xbox HIDAPI driver (matches Xbox GIP rumble):
+    //     [id, 0x00, 0x00, 0x09, 0x00, 0x0F, LT, RT, L, R, duration, delay, loop]
+    //
+    // Both paths send magnitudes as 0..100 percent (Xbox GIP convention);
+    // rescale to 0..255 so Pro's LRA encoder reaches full amplitude. NS2 Pro
+    // has no trigger motors, so fold trigger magnitudes into the main motor
+    // with max(trigger, motor). Xbox sends start-then-stop with a long gap;
+    // the NS2 motor times out after ~300 ms, so we ask the coordinator to
+    // refresh every 80 ms until the next set-report arrives.
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
-        guard type == .output, id?.rawValue == 0x09, data.count >= 10 else { return nil }
-        let base = data.startIndex
-        let leftAmp  = max(data[base + 6], data[base + 8])
-        let rightAmp = max(data[base + 7], data[base + 9])
+        guard type == .output else { return nil }
+        let b = data.startIndex
+        let ltMag, rtMag, lMag, rMag: UInt8
+        switch id?.rawValue {
+        case 0x03:
+            guard data.count >= 6 else { return nil }
+            ltMag = data[b + 2]; rtMag = data[b + 3]
+            lMag  = data[b + 4]; rMag  = data[b + 5]
+        case 0x09:
+            guard data.count >= 10 else { return nil }
+            ltMag = data[b + 6]; rtMag = data[b + 7]
+            lMag  = data[b + 8]; rMag  = data[b + 9]
+        default:
+            return nil
+        }
+        func scale(_ v: UInt8) -> UInt8 { UInt8(min(255, Int(v) * 255 / 100)) }
+        let leftAmp  = scale(max(ltMag, lMag))
+        let rightAmp = scale(max(rtMag, rMag))
         return RumbleCommand(
             leftAmp: leftAmp,
             rightAmp: rightAmp,
