@@ -228,9 +228,9 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         )
     }
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
+    func buildReport(_ state: ControllerState) async -> Data {
         let s = state.buttons
-        let sh = source.standardShoulders(state)
+        let sh = state.shoulders
         var bytes = [UInt8](repeating: 0, count: 16)
         bytes[0] = 0x01  // Report ID
 
@@ -301,9 +301,9 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
     //
     // Share byte at state[14]: SDL reads this for Xbox Series X (has_share_button).
     // Our state is 15 bytes so [14] is in-bounds and zeroed (share button off).
-    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data] {
+    func buildSecondaryReports(_ state: ControllerState) async -> [Data] {
         let s = state.buttons
-        let sh = source.standardShoulders(state)
+        let sh = state.shoulders
         var bytes = [UInt8](repeating: 0, count: 19)
         bytes[0] = 0x20  // report ID = GIP_CMD_INPUT
         bytes[1] = 0x00  // opts

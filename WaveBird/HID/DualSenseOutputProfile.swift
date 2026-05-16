@@ -80,9 +80,9 @@ struct DualSenseOutput: HIDOutputProfile, HIDOutputSession {
         0xC0,
     ])
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
+    func buildReport(_ state: ControllerState) async -> Data {
         let s = state.buttons
-        let sh = source.standardShoulders(state)
+        let sh = state.shoulders
         var bytes = [UInt8](repeating: 0, count: 64)
         bytes[0]  = 0x01  // Report ID
         bytes[1]  = SpoofEncode.stickX(state.leftStick.x)

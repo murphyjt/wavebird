@@ -88,10 +88,10 @@ actor SwitchProSession: HIDOutputSession {
 
     // Build the live input report. Layout depends on which mode the host has
     // put us into via subcommand 0x03.
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
+    func buildReport(_ state: ControllerState) async -> Data {
         switch inputMode {
-        case .simple: return buildSimpleReport(state, source: source)
-        case .full:   return buildFullReport(state, source: source)
+        case .simple: return buildSimpleReport(state)
+        case .full:   return buildFullReport(state)
         }
     }
 
@@ -332,9 +332,9 @@ actor SwitchProSession: HIDOutputSession {
     //   1..2:   16-button bitmap (LE)
     //   3:      low nibble = hat, high nibble = padding
     //   4..11:  X, Y, Rx, Ry (UInt16 LE, 0..65535, neutral 0x8000, +Y=down)
-    nonisolated private func buildSimpleReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
+    nonisolated private func buildSimpleReport(_ state: ControllerState) -> Data {
         let s = state.buttons
-        let sh = source.standardShoulders(state)
+        let sh = state.shoulders
         var bytes = [UInt8](repeating: 0, count: 12)
         bytes[0] = 0x3F
 
@@ -384,9 +384,9 @@ actor SwitchProSession: HIDOutputSession {
     //   9..11:  right stick (packed 12-bit X+Y)
     //   12:     vibration code
     //   13..48: IMU data (3 samples × 12 bytes — zeroed; IMU not exposed)
-    func buildFullReport(_ state: ControllerState, source: any ControllerProfile) -> Data {
+    func buildFullReport(_ state: ControllerState) -> Data {
         let s = state.buttons
-        let sh = source.standardShoulders(state)
+        let sh = state.shoulders
         var bytes = [UInt8](repeating: 0, count: 64)
         bytes[0] = 0x30
         bytes[1] = nextCounter()

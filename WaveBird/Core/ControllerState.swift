@@ -46,6 +46,10 @@ struct ControllerState: Sendable {
     var buttons:     ButtonSet
     var imu:         IMUSample?
     var timestamp:   ContinuousClock.Instant
+    // Normalized shoulder/trigger roles. Input parsers populate this from each
+    // controller's native button layout so output sessions don't need to
+    // translate Nintendo ZL/Z/L/R semantics themselves.
+    var shoulders:   StandardShoulders = StandardShoulders()
     // Raw BLE report bytes, set only in .ns2Passthrough mode.
     var rawBLEData:  Data? = nil
 

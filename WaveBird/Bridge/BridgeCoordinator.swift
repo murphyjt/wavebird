@@ -279,9 +279,9 @@ final class BridgeCoordinator {
                       let record = self.devices[id],
                       let vhid = record.virtualHID,
                       let session = record.session else { continue }
-                let report = await session.buildReport(state, source: record.profile)
+                let report = await session.buildReport(state)
                 try? await vhid.dispatch(report)
-                let secondaries = await session.buildSecondaryReports(state, source: record.profile)
+                let secondaries = await session.buildSecondaryReports(state)
                 for secondary in secondaries {
                     try? await vhid.dispatch(secondary)
                 }

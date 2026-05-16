@@ -125,22 +125,6 @@ struct NS2GameCubeProfile: ControllerProfile {
         return (d[1] & 0xFE) != 0 || d[3] != 0x40 || (d[2] & 0x80) != 0
     }
 
-    // GC layout: ZL/Z are the top digital shoulders, L/R are the bottom analog
-    // triggers (each click-detects at full pull). Map digital tops → bumpers
-    // and analog clicks → trigger-digital, with analog values from the
-    // calibrated trigger reading.
-    func standardShoulders(_ state: ControllerState) -> StandardShoulders {
-        let b = state.buttons
-        return StandardShoulders(
-            leftBumper: b.contains(.zl),
-            rightBumper: b.contains(.z),
-            leftTriggerDigital: b.contains(.l),
-            rightTriggerDigital: b.contains(.r),
-            leftTriggerAnalog: state.triggerL,
-            rightTriggerAnalog: state.triggerR
-        )
-    }
-
     func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState? {
         guard data.count >= 62 else { return nil }
         return Self.parse0x05(data, offset: 0, calibration: calibration)
@@ -179,16 +163,31 @@ struct NS2GameCubeProfile: ControllerProfile {
         if btn & (1 << 22) != 0 { buttons.insert(.l) }
         if btn & (1 << 23) != 0 { buttons.insert(.zl) }
 
+        let triggerL = data[base + 60]
+        let triggerR = data[base + 61]
+        // GC layout: ZL/Z are the top digital shoulders, L/R are the bottom
+        // analog triggers (each click-detects at full pull). Tops → bumpers,
+        // L/R clicks → trigger-digital, analog from the calibrated reading.
+        let shoulders = StandardShoulders(
+            leftBumper: buttons.contains(.zl),
+            rightBumper: buttons.contains(.z),
+            leftTriggerDigital: buttons.contains(.l),
+            rightTriggerDigital: buttons.contains(.r),
+            leftTriggerAnalog: triggerL,
+            rightTriggerAnalog: triggerR
+        )
+
         return ControllerState(
             leftStick:  SIMD2(NS2Sticks.axis(lx, calibration.left, axis: .x),
                               NS2Sticks.axis(ly, calibration.left, axis: .y, invert: true)),
             rightStick: SIMD2(NS2Sticks.axis(rx, calibration.right, axis: .x),
                               NS2Sticks.axis(ry, calibration.right, axis: .y, invert: true)),
-            triggerL: data[base + 60],
-            triggerR: data[base + 61],
+            triggerL: triggerL,
+            triggerR: triggerR,
             buttons: buttons,
             imu: nil,
-            timestamp: .now
+            timestamp: .now,
+            shoulders: shoulders
         )
     }
 }

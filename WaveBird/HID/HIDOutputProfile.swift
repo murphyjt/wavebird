@@ -77,8 +77,8 @@ protocol HIDOutputProfile: Sendable {
 // on DeviceRecord and routes both inbound state (buildReport) and outbound
 // host commands (handleSetReport) through it.
 protocol HIDOutputSession: Sendable {
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data
-    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data]
+    func buildReport(_ state: ControllerState) async -> Data
+    func buildSecondaryReports(_ state: ControllerState) async -> [Data]
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async
 
     // Decode a host Set Report into a normalized RumbleCommand if this
@@ -90,7 +90,7 @@ protocol HIDOutputSession: Sendable {
 }
 
 extension HIDOutputSession {
-    func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data] { [] }
+    func buildSecondaryReports(_ state: ControllerState) async -> [Data] { [] }
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {}
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? { nil }
 }
@@ -113,7 +113,7 @@ struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
 
     func makeSession() -> any HIDOutputSession { self }
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
+    func buildReport(_ state: ControllerState) async -> Data {
         guard let raw = state.rawBLEData else { return Data() }
         return Data([0x05]) + raw.prefix(63)
     }
@@ -135,7 +135,7 @@ struct NativeOutput: HIDOutputProfile, HIDOutputSession {
 
     func makeSession() -> any HIDOutputSession { self }
 
-    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
+    func buildReport(_ state: ControllerState) async -> Data {
         profile.buildHIDReport(state)
     }
 

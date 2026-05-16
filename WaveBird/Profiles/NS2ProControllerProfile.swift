@@ -160,20 +160,6 @@ struct NS2ProControllerProfile: ControllerProfile {
         return Data(bytes)
     }
 
-    // Pro layout: L/R are the top bumpers, ZL/ZR are the bottom digital
-    // triggers. Pro has no analog trigger, so analog peg to 0xFF on press.
-    func standardShoulders(_ state: ControllerState) -> StandardShoulders {
-        let b = state.buttons
-        return StandardShoulders(
-            leftBumper: b.contains(.l),
-            rightBumper: b.contains(.r),
-            leftTriggerDigital: b.contains(.zl),
-            rightTriggerDigital: b.contains(.zr),
-            leftTriggerAnalog: b.contains(.zl) ? 0xFF : 0,
-            rightTriggerAnalog: b.contains(.zr) ? 0xFF : 0
-        )
-    }
-
     func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState? {
         guard data.count >= 62 else { return nil }
         return Self.parse0x05(data, offset: 0, calibration: calibration)
@@ -217,6 +203,18 @@ struct NS2ProControllerProfile: ControllerProfile {
         if btn & (1 << 22) != 0 { buttons.insert(.l) }
         if btn & (1 << 23) != 0 { buttons.insert(.zl) }
 
+        // Pro layout: L/R are the top bumpers, ZL/ZR are the bottom digital
+        // triggers. Pro has no analog trigger axis, so analog pegs to 0xFF
+        // on press.
+        let shoulders = StandardShoulders(
+            leftBumper: buttons.contains(.l),
+            rightBumper: buttons.contains(.r),
+            leftTriggerDigital: buttons.contains(.zl),
+            rightTriggerDigital: buttons.contains(.zr),
+            leftTriggerAnalog: buttons.contains(.zl) ? 0xFF : 0,
+            rightTriggerAnalog: buttons.contains(.zr) ? 0xFF : 0
+        )
+
         return ControllerState(
             leftStick:  SIMD2(NS2Sticks.axis(lx, calibration.left, axis: .x),
                               NS2Sticks.axis(ly, calibration.left, axis: .y, invert: true)),
@@ -226,7 +224,8 @@ struct NS2ProControllerProfile: ControllerProfile {
             triggerR: 0,
             buttons: buttons,
             imu: nil,
-            timestamp: .now
+            timestamp: .now,
+            shoulders: shoulders
         )
     }
 }
