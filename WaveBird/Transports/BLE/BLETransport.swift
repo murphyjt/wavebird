@@ -27,7 +27,11 @@ actor BLETransport: Transport {
     private var pendingResponses: [UUID: (request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
 
     init() {
-        let (stream, cont) = AsyncStream.makeStream(of: TransportEvent.self, bufferingPolicy: .unbounded)
+        // bufferingNewest caps memory if the main-actor consumer falls behind.
+        // 64 is well above the ~70 Hz BLE report rate so a healthy consumer
+        // never drops events; if the main actor blocks long enough to overflow,
+        // dropping the oldest is the right tradeoff for a real-time bridge.
+        let (stream, cont) = AsyncStream.makeStream(of: TransportEvent.self, bufferingPolicy: .bufferingNewest(64))
         let q = DispatchQueue.main
         let d = BLEDelegate()
         let c = CBCentralManager(delegate: d, queue: q)
