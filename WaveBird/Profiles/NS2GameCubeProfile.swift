@@ -103,22 +103,20 @@ struct NS2GameCubeProfile: ControllerProfile {
     //   byte[2]  = 0x01 (motor on) or 0x00 (motor off)
     //   bytes[3..41] = reserved zeros
     //
+    // GC has a single on/off motor with no amplitude axis, so any non-zero
+    // amplitude on either side — direct (leftAmp/rightAmp) or HD-encoded
+    // (leftHD/rightHD non-neutral) — turns the motor on.
+    //
     // NS1 HD Rumble neutral = [0x00, 0x01, 0x40, 0x40]; amplitude=0 when
     //   byte[1]&0xFE==0 AND byte[3]==0x40 AND byte[2]&0x80==0.
-    func encodeVibration(hdLeft: Data, hdRight: Data, counter: UInt8) -> Data? {
-        let on = hasNS1Amplitude(hdLeft) || hasNS1Amplitude(hdRight)
-        return gcMotorPacket(on: on, counter: counter)
-    }
-
-    func encodeVibration(leftAmp: UInt8, rightAmp: UInt8, counter: UInt8) -> Data? {
-        gcMotorPacket(on: leftAmp > 0 || rightAmp > 0, counter: counter)
-    }
-
-    private func gcMotorPacket(on: Bool, counter: UInt8) -> Data {
+    func encodeRumble(_ cmd: RumbleCommand) -> Data? {
+        let hdActive = (cmd.leftHD.map(hasNS1Amplitude) ?? false)
+                   || (cmd.rightHD.map(hasNS1Amplitude) ?? false)
+        let ampActive = cmd.leftAmp > 0 || cmd.rightAmp > 0
         var packet = Data(count: 42)
         packet[0] = 0x00
-        packet[1] = 0x50 | (counter & 0xF)
-        packet[2] = on ? 0x01 : 0x00
+        packet[1] = 0x50 | (cmd.transmitCounter & 0xF)
+        packet[2] = (hdActive || ampActive) ? 0x01 : 0x00
         return packet
     }
 

@@ -61,11 +61,19 @@ protocol HIDOutputSession: Sendable {
     func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data
     func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data]
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async
+
+    // Decode a host Set Report into a normalized RumbleCommand if this
+    // session's protocol carries rumble in that report. The coordinator
+    // forwards the result to ControllerProfile.encodeRumble and onto the
+    // controller's vibration channel. Return nil for reports unrelated to
+    // rumble (handshake, LED, etc. — those go through handleSetReport).
+    func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand?
 }
 
 extension HIDOutputSession {
     func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data] { [] }
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {}
+    func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? { nil }
 }
 
 // MARK: - NS2 raw passthrough
@@ -110,6 +118,16 @@ struct NativeOutput: HIDOutputProfile, HIDOutputSession {
 
     func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
         profile.buildHIDReport(state)
+    }
+
+    // GC native: Output Report 0x03 carries [reportID, seq, val, …padding].
+    // val is on/off (no amplitude). Pro native uses standardGamepadDescriptor
+    // which declares no output reports, so there's no native Pro rumble path.
+    func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
+        guard type == .output, id?.rawValue == 0x03, data.count >= 3 else { return nil }
+        let base = data.startIndex
+        let on: UInt8 = data[base + 2] > 0 ? 0xFF : 0
+        return RumbleCommand(leftAmp: on, rightAmp: on, transmitCounter: data[base + 1])
     }
 }
 

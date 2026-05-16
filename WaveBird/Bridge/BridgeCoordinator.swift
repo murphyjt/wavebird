@@ -123,7 +123,7 @@ final class BridgeCoordinator {
         let session = out.makeSession()
         let rumbleBox = RumbleRefreshBox()
         rumbleRefreshBoxes[record.id] = rumbleBox
-        let onSetReport = makeSetReportHandler(id: record.id, transport: transport(for: record.id.transport), profile: record.profile, outputMode: mode, rumbleRefresh: rumbleBox, session: session)
+        let onSetReport = makeSetReportHandler(id: record.id, transport: transport(for: record.id.transport), profile: record.profile, rumbleRefresh: rumbleBox, session: session)
         guard let vhid = VirtualHIDDevice(
             descriptor: out.descriptor,
             vendorID: out.vendorID,
@@ -139,14 +139,13 @@ final class BridgeCoordinator {
     }
 
     // Always-on diagnostic log for output reports the host sends us.
-    // Routes GC rumble (report 0x03), Switch Pro HD Rumble (0x10/0x01), and Xbox
-    // USB rumble (0x09) to the vibration characteristic, and Switch Pro spoof
-    // subcommands to the spoof handler.
+    // Routes rumble through session.parseRumble → profile.encodeRumble →
+    // transport.sendVibration, and forwards everything to session.handleSetReport
+    // for handshake/subcommand replies.
     private func makeSetReportHandler(
         id deviceID: DeviceID,
         transport: (any Transport)?,
         profile: any ControllerProfile,
-        outputMode: HIDOutputMode,
         rumbleRefresh: RumbleRefreshBox,
         session: any HIDOutputSession
     ) -> VirtualHIDDevice.SetReportHandler {
@@ -154,50 +153,26 @@ final class BridgeCoordinator {
             let idStr = id.map { String(format: "0x%02X", $0.rawValue) } ?? "-"
             let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
             stderrLog("[hid] setReport type=\(type) id=\(idStr) len=\(data.count) [\(hex)]")
-            if type == .output, id?.rawValue == 0x03 {
-                // SDL sends 63 payload bytes; the controller only needs [reportID, seq, val, pad].
-                var packet = Data([0x03])
-                packet.append(contentsOf: data.prefix(3))
-                try? await transport?.sendVibration(packet, to: deviceID)
-            }
-            // Report 0x10 = pure rumble; 0x01 = rumble + subcommand. Both have the same
-            // header layout: [reportID, counter, hdLeft×4, hdRight×4, …]. CoreHID
-            // includes the report ID byte in `data`, so rumble starts at offset 2.
-            // data[1] is the SDL packet counter (0x00-0x0F), forwarded as the NS2 tid.
-            if type == .output, let rid = id?.rawValue, (rid == 0x10 || rid == 0x01), data.count >= 10 {
-                let counter = data[1]
-                let hdLeft  = data.subdata(in: 2..<6)
-                let hdRight = data.subdata(in: 6..<10)
-                if let vibPayload = profile.encodeVibration(hdLeft: hdLeft, hdRight: hdRight, counter: counter) {
-                    try? await transport?.sendVibration(vibPayload, to: deviceID)
+
+            if let cmd = session.parseRumble(type: type, id: id, data: data) {
+                rumbleRefresh.cancel()
+                if let payload = profile.encodeRumble(cmd) {
+                    try? await transport?.sendVibration(payload, to: deviceID)
                 }
-            }
-            // Xbox USB rumble: report 0x09, layout [id, 0x00, 0x00, 0x09, 0x00, 0x0F, LT, RT, LF, HF, …]
-            // NS2 Pro has no trigger motors; fold trigger bytes into the corresponding main motor LRA.
-            // Xbox sends start-then-stop ~1s apart; NS2 has a ~300ms motor timeout, so sustain
-            // rumble with a refresh loop until a zero-amplitude stop packet arrives.
-            if outputMode == .xboxSeries, type == .output, id?.rawValue == 0x09, data.count >= 10 {
-                let leftAmp  = max(data[6], data[8])
-                let rightAmp = max(data[7], data[9])
-                if leftAmp == 0 && rightAmp == 0 {
-                    rumbleRefresh.cancel()
-                    let counter = UInt8(truncatingIfNeeded: Int(Date().timeIntervalSince1970 * 100)) & 0xF
-                    if let p = profile.encodeVibration(leftAmp: 0, rightAmp: 0, counter: counter) {
-                        try? await transport?.sendVibration(p, to: deviceID)
-                    }
-                } else {
-                    let t = transport, p = profile, d = deviceID
+                if let interval = cmd.refreshInterval, !cmd.isStop {
                     rumbleRefresh.replace(with: Task {
+                        var counter = cmd.transmitCounter
                         while !Task.isCancelled {
-                            let counter = UInt8(truncatingIfNeeded: Int(Date().timeIntervalSince1970 * 100)) & 0xF
-                            if let payload = p.encodeVibration(leftAmp: leftAmp, rightAmp: rightAmp, counter: counter) {
-                                try? await t?.sendVibration(payload, to: d)
+                            try? await Task.sleep(for: interval)
+                            counter = counter &+ 1
+                            if let payload = profile.encodeRumble(cmd.withCounter(counter)) {
+                                try? await transport?.sendVibration(payload, to: deviceID)
                             }
-                            try? await Task.sleep(for: .milliseconds(80))
                         }
                     })
                 }
             }
+
             await session.handleSetReport(device: device, type: type, id: id, data: data)
         }
     }

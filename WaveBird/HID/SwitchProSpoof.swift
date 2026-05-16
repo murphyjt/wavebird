@@ -95,6 +95,22 @@ actor SwitchProSession: HIDOutputSession {
         }
     }
 
+    // Apple's Switch Pro driver sends rumble in Output Report 0x10 (pure
+    // rumble) or 0x01 (rumble + subcommand). Both share the same header:
+    // [reportID, counter, hdLeft×4, hdRight×4, …]. The 0x01 report's
+    // subcommand bytes are handled separately via handleSetReport.
+    nonisolated func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
+        guard type == .output, let rid = id?.rawValue,
+              rid == 0x10 || rid == 0x01,
+              data.count >= 10 else { return nil }
+        let base = data.startIndex
+        return RumbleCommand(
+            leftHD: data.subdata(in: (base + 2)..<(base + 6)),
+            rightHD: data.subdata(in: (base + 6)..<(base + 10)),
+            transmitCounter: data[base + 1]
+        )
+    }
+
     // MARK: - Subcommand reply construction
 
     private func buildSubcommandReply(subcmdID: UInt8, args: Data) -> Data {

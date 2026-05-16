@@ -73,42 +73,31 @@ struct NS2ProControllerProfile: ControllerProfile {
     private static let hiFreq: UInt16 = 0x187
     private static let loFreq: UInt16 = 0x112
 
-    func encodeVibration(hdLeft: Data, hdRight: Data, counter: UInt8) -> Data? {
-        guard hdLeft.count >= 4, hdRight.count >= 4 else { return nil }
-
-        // NS1 HF amplitude: byte[1] bits [7:1], range 0-200
-        let ns1HF = Int(hdRight[1] & 0xFE)
-        // NS1 LF amplitude: byte[3] range 0x40(zero)..0x72(max); half-step in byte[2] bit 7
-        let ns1LF = max(0, Int(hdLeft[3]) - 64) * 2 + ((hdLeft[2] & 0x80) != 0 ? 1 : 0)
-
-        // Route NS1 LF → left LRA (low-freq physical motor, heavier feel) via SDL lo_amp.
-        // Route NS1 HF → right LRA (high-freq physical motor, lighter feel) via SDL hi_amp.
-        // Clamp before UInt16 cast: out-of-range NS1 values can exceed RUMBLE_MAX.
-        let leftLoAmp  = UInt16(min(ns1LF * Self.rumbleMax / 101, Self.rumbleMax))
-        let rightHiAmp = UInt16(min(ns1HF * Self.rumbleMax / 200, Self.rumbleMax))
-
-        let tid = counter & 0xF
+    // SDL EncodeHDRumble bit layout (libsdl-org/SDL, SDL_hidapi_switch2.c):
+    // 40 bits: hi_freq[9:0] | hi_amp[15:6] | lo_freq[9:0] | lo_amp[15:6]
+    //
+    // When the command carries NS1 HD bytes we extract amplitudes from them
+    // (HF byte[1] bits[7:1], LF byte[3] range 0x40..0x72 with half-step in
+    // byte[2] bit 7). Otherwise we map the 8-bit leftAmp/rightAmp directly.
+    func encodeRumble(_ cmd: RumbleCommand) -> Data? {
+        let leftLoAmp: UInt16
+        let rightHiAmp: UInt16
+        if let hdL = cmd.leftHD, let hdR = cmd.rightHD, hdL.count >= 4, hdR.count >= 4 {
+            let ns1HF = Int(hdR[1] & 0xFE)
+            let ns1LF = max(0, Int(hdL[3]) - 64) * 2 + ((hdL[2] & 0x80) != 0 ? 1 : 0)
+            // Route NS1 LF → left LRA (low-freq physical motor, heavier feel) via SDL lo_amp.
+            // Route NS1 HF → right LRA (high-freq physical motor, lighter feel) via SDL hi_amp.
+            // Clamp before UInt16 cast: out-of-range NS1 values can exceed RUMBLE_MAX.
+            leftLoAmp  = UInt16(min(ns1LF * Self.rumbleMax / 101, Self.rumbleMax))
+            rightHiAmp = UInt16(min(ns1HF * Self.rumbleMax / 200, Self.rumbleMax))
+        } else {
+            leftLoAmp  = UInt16(Int(cmd.leftAmp)  * Self.rumbleMax / 255)
+            rightHiAmp = UInt16(Int(cmd.rightAmp) * Self.rumbleMax / 255)
+        }
+        let tid = cmd.transmitCounter & 0xF
 
         // Pro Output Report 0x02 (42 bytes, BLE handle 0x0012):
         // [0x00]=0x00 (BT report ID); [0x01..0x06]=left LRA; [0x11..0x16]=right LRA.
-        var packet = Data(count: 42)
-        packet[0] = 0x00
-        packet[1]  = ((leftLoAmp  > 0 ? 0x50 : 0x10) | tid)
-        let l = encodeHDRumble(hiAmp: 0,          loAmp: leftLoAmp)
-        packet[2] = l[0]; packet[3] = l[1]; packet[4] = l[2]; packet[5] = l[3]; packet[6] = l[4]
-        packet[17] = ((rightHiAmp > 0 ? 0x50 : 0x10) | tid)
-        let r = encodeHDRumble(hiAmp: rightHiAmp, loAmp: 0)
-        packet[18] = r[0]; packet[19] = r[1]; packet[20] = r[2]; packet[21] = r[3]; packet[22] = r[4]
-
-        return packet
-    }
-
-    // SDL EncodeHDRumble bit layout (libsdl-org/SDL, SDL_hidapi_switch2.c):
-    // 40 bits: hi_freq[9:0] | hi_amp[15:6] | lo_freq[9:0] | lo_amp[15:6]
-    func encodeVibration(leftAmp: UInt8, rightAmp: UInt8, counter: UInt8) -> Data? {
-        let leftLoAmp  = UInt16(Int(leftAmp)  * Self.rumbleMax / 255)
-        let rightHiAmp = UInt16(Int(rightAmp) * Self.rumbleMax / 255)
-        let tid = counter & 0xF
         var packet = Data(count: 42)
         packet[0] = 0x00
         packet[1]  = ((leftLoAmp  > 0 ? 0x50 : 0x10) | tid)

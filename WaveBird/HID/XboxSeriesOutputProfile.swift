@@ -1,3 +1,4 @@
+import CoreHID
 import Foundation
 
 // Microsoft Xbox Wireless Controller, VID 0x045E / PID 0x0B13 (BLE Series X).
@@ -208,6 +209,24 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
 
         0xC0,
     ])
+
+    // SDL's Xbox HIDAPI driver sends rumble as USB report 0x09:
+    //   [id, 0x00, 0x00, 0x09, 0x00, 0x0F, LT, RT, LF, HF, …]
+    // NS2 Pro has no trigger motors, so fold trigger bytes into the main motor
+    // LRA by taking max(trigger, motor). Xbox sends start-then-stop ~1 s apart
+    // but the NS2 motor times out after ~300 ms, so we ask the coordinator to
+    // refresh the command every 80 ms until the next set-report arrives.
+    func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
+        guard type == .output, id?.rawValue == 0x09, data.count >= 10 else { return nil }
+        let base = data.startIndex
+        let leftAmp  = max(data[base + 6], data[base + 8])
+        let rightAmp = max(data[base + 7], data[base + 9])
+        return RumbleCommand(
+            leftAmp: leftAmp,
+            rightAmp: rightAmp,
+            refreshInterval: (leftAmp == 0 && rightAmp == 0) ? nil : .milliseconds(80)
+        )
+    }
 
     func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
         let s = state.buttons
