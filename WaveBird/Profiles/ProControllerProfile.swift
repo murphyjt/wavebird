@@ -1,12 +1,10 @@
 @preconcurrency import CoreBluetooth
 import Foundation
 
-struct NS2ProControllerProfile: ControllerProfile {
+struct ProControllerProfile: ControllerProfile {
     let name = "Nintendo Switch 2 Pro Controller"
 
-    // Pro reports buttons | analog | IMU | rumble + Pro-specific bit 0x08.
-    // (GC uses 0x27; JoyCons use 0x37 which adds mouse 0x10.)
-    private static let featureMask: UInt8 = 0x2F
+    private static let features: NS2Feature = [.buttons, .analog, .imu, .unknown3, .rumble]
 
     var bleMatcher: BLEMatcher? {
         let responseHandles = [NS2Handle.commandResponse1, NS2Handle.commandResponse2]
@@ -30,9 +28,9 @@ struct NS2ProControllerProfile: ControllerProfile {
                 NS2Commands.firmwareInfo,
                 NS2Commands.connectionVibration,
                 NS2Commands.player1LED,
-                NS2Commands.setFeatureMask(Self.featureMask),
+                NS2Commands.setFeatureMask(Self.features),
                 NS2Commands.sendVibrationData,
-                NS2Commands.enableFeatures(Self.featureMask),
+                NS2Commands.enableFeatures(Self.features),
             ],
             vibrationCharacteristic: CBUUID(string: "CC483F51-9258-427D-A939-630C31F72B05")
         )

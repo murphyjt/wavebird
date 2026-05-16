@@ -1,11 +1,10 @@
 @preconcurrency import CoreBluetooth
 import Foundation
 
-struct NS2GameCubeProfile: ControllerProfile {
+struct GameCubeProfile: ControllerProfile {
     let name = "Nintendo GameCube Controller"
 
-    // GC reports buttons | analog | IMU | rumble. Pro adds bit 0x08; JoyCon adds mouse (0x10).
-    private static let featureMask: UInt8 = 0x27
+    private static let features: NS2Feature = [.buttons, .analog, .imu, .rumble]
 
     // Cmd 0x02/0x04 — read 2 bytes from flash 0x13140: left/right trigger rest position.
     // GC-only: the analog trigger calibration record. Address from SDL
@@ -43,10 +42,10 @@ struct NS2GameCubeProfile: ControllerProfile {
                 NS2Commands.firmwareInfo,
                 NS2Commands.connectionVibration,
                 NS2Commands.player1LED,
-                NS2Commands.setFeatureMask(Self.featureMask),
+                NS2Commands.setFeatureMask(Self.features),
                 Self.triggerCalibrationReadCommand,
                 NS2Commands.sendVibrationData,
-                NS2Commands.enableFeatures(Self.featureMask),
+                NS2Commands.enableFeatures(Self.features),
             ],
             vibrationCharacteristic: NS2Handle.uuid(0x0012, for: .gameCube)
         )

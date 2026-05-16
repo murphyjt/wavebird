@@ -64,21 +64,36 @@ enum NS2Commands {
     ])
 
     // Cmd 0x0C/0x02 — declare which features are allowed in subsequent enable/disable calls.
-    // Mask differs per controller: GC 0x27, Pro 0x2F, JoyCon 0x37.
-    static func setFeatureMask(_ mask: UInt8) -> Data {
+    static func setFeatureMask(_ features: NS2Feature) -> Data {
         Data([
             0x0C, 0x91, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00,
-            mask, 0x00, 0x00, 0x00,
+            features.rawValue, 0x00, 0x00, 0x00,
         ])
     }
 
     // Cmd 0x0C/0x04 — turn on the features set in the mask above.
-    static func enableFeatures(_ mask: UInt8) -> Data {
+    static func enableFeatures(_ features: NS2Feature) -> Data {
         Data([
             0x0C, 0x91, 0x01, 0x04, 0x00, 0x04, 0x00, 0x00,
-            mask, 0x00, 0x00, 0x00,
+            features.rawValue, 0x00, 0x00, 0x00,
         ])
     }
+}
+
+// Feature flags accepted by cmd 0x0C subcommands 0x02 (set mask) / 0x04 (enable) /
+// 0x05 (disable). Bits per ndeadly's commands.md "Feature Flags" table.
+struct NS2Feature: OptionSet, Sendable {
+    let rawValue: UInt8
+
+    static let buttons      = NS2Feature(rawValue: 1 << 0)  // 0x01
+    static let analog       = NS2Feature(rawValue: 1 << 1)  // 0x02
+    static let imu          = NS2Feature(rawValue: 1 << 2)  // 0x04 — accel + gyro
+    // Bit 3 is documented as "Unused" but SDL and BlueRetro both set it for Pro.
+    // Purpose unverified; included so we can mirror existing behaviour.
+    static let unknown3     = NS2Feature(rawValue: 1 << 3)  // 0x08
+    static let mouse        = NS2Feature(rawValue: 1 << 4)  // 0x10 — JoyCon only
+    static let rumble       = NS2Feature(rawValue: 1 << 5)  // 0x20
+    static let magnetometer = NS2Feature(rawValue: 1 << 7)  // 0x80
 }
 
 // Parsers for the response payloads returned by `NS2Commands.*Read` flash reads.

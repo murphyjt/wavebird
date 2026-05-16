@@ -365,7 +365,7 @@ final class BridgeCoordinator {
                             FileHandle.standardError.write(Data("[ble] serial:        \(serial)\n".utf8))
                         }
                     case 0x13140:
-                        if let zeros = NS2GameCubeProfile.parseTriggerZeros(flashData) {
+                        if let zeros = GameCubeProfile.parseTriggerZeros(flashData) {
                             devices[id]?.triggerZeros = zeros
                             FileHandle.standardError.write(Data("[ble] trigger zeros: L=\(zeros.left) R=\(zeros.right)\n".utf8))
                         }
