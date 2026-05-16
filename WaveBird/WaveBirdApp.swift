@@ -22,6 +22,7 @@ struct WaveBirdApp: App {
                     }
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
     }
 }

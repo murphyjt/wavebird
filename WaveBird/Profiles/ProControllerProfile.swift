@@ -2,7 +2,7 @@
 import Foundation
 
 struct ProControllerProfile: ControllerProfile {
-    let name = "Nintendo Switch 2 Pro Controller"
+    let name = "Pro Controller"
 
     private static let features: NS2Feature = [.buttons, .analog, .imu, .unknown3, .rumble]
 

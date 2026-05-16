@@ -4,7 +4,7 @@ struct ContentView: View {
     @Bindable var coordinator: BridgeCoordinator
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             header
             if coordinator.devices.isEmpty {
                 emptyState
@@ -30,6 +30,7 @@ struct ContentView: View {
             Button(coordinator.isScanning ? "Stop Scan" : "Start Scan") {
                 Task { await coordinator.toggleScan() }
             }
+//            .buttonStyle(.glass)
         }
     }
 
@@ -60,14 +61,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private func deviceCard(_ record: DeviceRecord) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Image(systemName: "gamecontroller.fill")
                 .font(.title3)
-                .foregroundStyle(record.virtualHID != nil ? .white : .black)
+                .foregroundStyle(.white)
                 .frame(width: 30, height: 30)
                 .background(record.virtualHID != nil ? record.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed : Color.secondary)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(record.profile.name)
                     .font(.default)
                 HStack(spacing: 6) {
@@ -75,7 +76,7 @@ struct ContentView: View {
                         .fill(stateColor(record.connectionState))
                         .frame(width: 10, height: 10)
                     Text(stateLabel(record.connectionState))
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                     if record.connectionState == .ready, record.reportRate > 0 {
                         HStack(spacing: 4) {
@@ -110,7 +111,7 @@ struct ContentView: View {
             .fixedSize()
         }
         .padding(10)
-        .background(Color.secondary.opacity(0.08))
+        .background(Color.secondary.opacity(0.065))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
