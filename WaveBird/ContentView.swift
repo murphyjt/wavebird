@@ -95,13 +95,13 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Picker("", selection: Binding(
-                    get: { record.outputMode },
-                    set: { mode in
-                        Task { await coordinator.setOutputMode(mode, for: record.id) }
+                    get: { record.outputModeID },
+                    set: { id in
+                        Task { await coordinator.setOutputMode(id, for: record.id) }
                     }
                 )) {
-                    ForEach(HIDOutputMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
+                    ForEach(coordinator.catalog.entries) { entry in
+                        Text(entry.displayName).tag(entry.id)
                     }
                 }
                 .labelsHidden()

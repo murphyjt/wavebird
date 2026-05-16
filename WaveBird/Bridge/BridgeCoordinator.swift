@@ -27,11 +27,11 @@ struct DeviceRecord: Identifiable {
     var firmware: FirmwareInfo? = nil
     var triggerZeros: (left: UInt8, right: UInt8)? = nil
     var calibration = StickCalibrationPair()
-    var outputMode: HIDOutputMode
+    var outputModeID: String
     // Mode captured at the moment the virtual HID device was created. We
-    // intentionally keep using this instead of the record's live outputMode
+    // intentionally keep using this instead of the record's live outputModeID
     // while republishing so reports keep matching the active descriptor.
-    var activeOutputMode: HIDOutputMode = .native
+    var activeOutputModeID: String = HIDOutputCatalog.nativeID
     // Per-virtual-device session created at .ready via the output profile's
     // makeSession(). Stateless outputs return self; stateful spoofs (Switch
     // Pro) return an actor that owns handshake/mode state for this connection.
@@ -43,13 +43,14 @@ struct DeviceRecord: Identifiable {
 final class BridgeCoordinator {
     let profiles: [any ControllerProfile]
     let transports: [any Transport]
+    let catalog: HIDOutputCatalog
 
     private(set) var devices: [DeviceID: DeviceRecord] = [:]
     private(set) var isScanning = false
     private(set) var lastReportSnapshot: ReportSnapshot?
 
     private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
-    private let defaultOutputMode: HIDOutputMode
+    private let defaultOutputModeID: String
 
     @ObservationIgnored
     private var consumerTask: Task<Void, Never>?
@@ -90,36 +91,34 @@ final class BridgeCoordinator {
         deinit { ProcessInfo.processInfo.endActivity(token) }
     }
 
-    init(profiles: [any ControllerProfile], transports: [any Transport]) {
+    init(
+        profiles: [any ControllerProfile],
+        transports: [any Transport],
+        catalog: HIDOutputCatalog = .default
+    ) {
         self.profiles = profiles
         self.transports = transports
+        self.catalog = catalog
         let stored = UserDefaults.standard.string(forKey: Self.outputModeDefaultsKey)
-        self.defaultOutputMode = stored.flatMap(HIDOutputMode.init(rawValue:)) ?? .native
+        self.defaultOutputModeID = stored.flatMap { catalog.entry(id: $0)?.id } ?? HIDOutputCatalog.nativeID
     }
 
     // Persist the new default for future devices, update this device's desired
     // mode, and republish its virtual HID if it is currently active.
-    func setOutputMode(_ mode: HIDOutputMode, for id: DeviceID) async {
-        guard devices[id]?.outputMode != mode else { return }
-        devices[id]?.outputMode = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: Self.outputModeDefaultsKey)
+    func setOutputMode(_ modeID: String, for id: DeviceID) async {
+        guard devices[id]?.outputModeID != modeID else { return }
+        devices[id]?.outputModeID = modeID
+        UserDefaults.standard.set(modeID, forKey: Self.outputModeDefaultsKey)
         guard devices[id]?.virtualHID != nil else { return }
-        await republishVirtualHID(for: id, mode: mode)
+        await republishVirtualHID(for: id, modeID: modeID)
     }
 
-    private func output(for record: DeviceRecord, mode: HIDOutputMode) -> any HIDOutputProfile {
-        switch mode {
-        case .native:          return NativeOutput(profile: record.profile)
-        case .ns2Passthrough:  return NS2PassthroughOutput(profile: record.profile)
-        case .switchPro:       return SwitchProOutput()
-        case .dualShock4:      return DualShock4Output()
-        case .dualSense:       return DualSenseOutput()
-        case .xboxSeries:      return XboxSeriesOutput()
-        }
+    private func output(for record: DeviceRecord, modeID: String) -> any HIDOutputProfile {
+        catalog.resolved(id: modeID).makeProfile(record.profile)
     }
 
-    private func makeVirtualHID(for record: DeviceRecord, mode: HIDOutputMode) -> (VirtualHIDDevice, any HIDOutputSession)? {
-        let out = output(for: record, mode: mode)
+    private func makeVirtualHID(for record: DeviceRecord, modeID: String) -> (VirtualHIDDevice, any HIDOutputSession)? {
+        let out = output(for: record, modeID: modeID)
         let session = out.makeSession()
         let rumbleBox = RumbleRefreshBox()
         rumbleRefreshBoxes[record.id] = rumbleBox
@@ -132,7 +131,7 @@ final class BridgeCoordinator {
             manufacturer: out.manufacturer,
             versionNumber: out.versionNumber,
             serialNumber: record.serial,
-            transport: hidTransport(for: record, mode: mode),
+            transport: hidTransport(for: record),
             onSetReport: onSetReport
         ) else { return nil }
         return (vhid, session)
@@ -177,14 +176,14 @@ final class BridgeCoordinator {
         }
     }
 
-    private func hidTransport(for record: DeviceRecord, mode: HIDOutputMode) -> HIDDeviceTransport {
+    private func hidTransport(for record: DeviceRecord) -> HIDDeviceTransport {
         // Always use .usb — BLE-transport virtual devices with output reports trigger
         // kIOReturnNoPower (IOServiceOpen:0xe00002e2). The transport hint is independent
         // of the real controller's connection and has no effect on input delivery.
         return .usb
     }
 
-    private func republishVirtualHID(for id: DeviceID, mode: HIDOutputMode) async {
+    private func republishVirtualHID(for id: DeviceID, modeID: String) async {
         guard var record = devices[id] else { return }
         record.virtualHID = nil
         devices[id]?.virtualHID = nil
@@ -192,14 +191,14 @@ final class BridgeCoordinator {
         rumbleRefreshBoxes[id]?.cancel()
         rumbleRefreshBoxes[id] = nil
         try? await Task.sleep(for: .milliseconds(150))
-        guard let (vhid, session) = makeVirtualHID(for: record, mode: mode) else {
+        guard let (vhid, session) = makeVirtualHID(for: record, modeID: modeID) else {
             devices[id]?.connectionState = .failed("Failed to create virtual HID device")
             return
         }
         await vhid.activate()
         devices[id]?.virtualHID = vhid
         devices[id]?.session = session
-        devices[id]?.activeOutputMode = mode
+        devices[id]?.activeOutputModeID = modeID
     }
 
     deinit {
@@ -309,7 +308,7 @@ final class BridgeCoordinator {
                     advertisement: info,
                     connectionState: .discovered,
                     virtualHID: nil,
-                    outputMode: defaultOutputMode
+                    outputModeID: defaultOutputModeID
                 )
             }
             guard let t = transport(for: kind) else { return }
@@ -328,11 +327,11 @@ final class BridgeCoordinator {
         case .ready(let id):
             devices[id]?.connectionState = .ready
             guard let record = devices[id] else { return }
-            if let (vhid, session) = makeVirtualHID(for: record, mode: record.outputMode) {
+            if let (vhid, session) = makeVirtualHID(for: record, modeID: record.outputModeID) {
                 await vhid.activate()
                 devices[id]?.virtualHID = vhid
                 devices[id]?.session = session
-                devices[id]?.activeOutputMode = record.outputMode
+                devices[id]?.activeOutputModeID = record.outputModeID
                 startDispatch(for: id)
             } else {
                 devices[id]?.connectionState = .failed("Failed to create virtual HID device")
@@ -444,7 +443,7 @@ final class BridgeCoordinator {
                     state.triggerL = state.triggerL >= zeros.left ? state.triggerL - zeros.left : 0
                     state.triggerR = state.triggerR >= zeros.right ? state.triggerR - zeros.right : 0
                 }
-                if record.activeOutputMode == .ns2Passthrough {
+                if record.activeOutputModeID == "ns2Passthrough" {
                     state.rawBLEData = data
                 }
                 stateContinuations[id]?.yield(state)

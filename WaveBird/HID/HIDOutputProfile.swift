@@ -18,24 +18,43 @@ import Foundation
 // the triggers — physically correct for each controller despite ButtonSet's
 // Nintendo-flavored naming.
 
-enum HIDOutputMode: String, CaseIterable, Sendable, Hashable {
-    case native
-    case ns2Passthrough
-    case switchPro
-    case dualShock4
-    case dualSense
-    case xboxSeries
+// Registry of available output modes. Each entry pairs a stable string ID
+// (used for persistence and as the picker tag) with a display name and a
+// factory that produces the HIDOutputProfile instance for a given input
+// controller. Adding a new spoof is a one-line entry here plus the impl
+// file — no central enum to edit.
+struct HIDOutputCatalog: Sendable {
+    struct Entry: Sendable, Identifiable, Hashable {
+        let id: String
+        let displayName: String
+        let makeProfile: @Sendable (any ControllerProfile) -> any HIDOutputProfile
 
-    var displayName: String {
-        switch self {
-        case .native:          return "Native (Switch 2)"
-        case .ns2Passthrough:  return "NS2 Passthrough (raw)"
-        case .switchPro:       return "Switch Pro Controller"
-        case .dualShock4:      return "DualShock 4"
-        case .dualSense:       return "DualSense"
-        case .xboxSeries:      return "Xbox Wireless Controller"
-        }
+        func hash(into hasher: inout Hasher) { hasher.combine(id) }
+        static func == (lhs: Entry, rhs: Entry) -> Bool { lhs.id == rhs.id }
     }
+
+    let entries: [Entry]
+
+    func entry(id: String) -> Entry? {
+        entries.first { $0.id == id }
+    }
+
+    // Resolve to the named entry, falling back to "native" if the ID is
+    // unknown (e.g. a persisted value from a removed mode).
+    func resolved(id: String) -> Entry {
+        entry(id: id) ?? entry(id: HIDOutputCatalog.nativeID)!
+    }
+
+    static let nativeID = "native"
+
+    static let `default` = HIDOutputCatalog(entries: [
+        Entry(id: nativeID,        displayName: "Native (Switch 2)")        { NativeOutput(profile: $0) },
+        Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)")   { NS2PassthroughOutput(profile: $0) },
+        Entry(id: "switchPro",     displayName: "Switch Pro Controller")   { _ in SwitchProOutput() },
+        Entry(id: "dualShock4",    displayName: "DualShock 4")              { _ in DualShock4Output() },
+        Entry(id: "dualSense",     displayName: "DualSense")                { _ in DualSenseOutput() },
+        Entry(id: "xboxSeries",    displayName: "Xbox Wireless Controller") { _ in XboxSeriesOutput() },
+    ])
 }
 
 protocol HIDOutputProfile: Sendable {
