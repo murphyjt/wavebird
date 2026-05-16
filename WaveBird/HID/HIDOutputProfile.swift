@@ -20,6 +20,7 @@ import Foundation
 
 enum HIDOutputMode: String, CaseIterable, Sendable, Hashable {
     case native
+    case ns2Passthrough
     case switchPro
     case dualShock4
     case dualSense
@@ -27,11 +28,12 @@ enum HIDOutputMode: String, CaseIterable, Sendable, Hashable {
 
     var displayName: String {
         switch self {
-        case .native:      return "Native (Switch 2)"
-        case .switchPro:   return "Switch Pro Controller"
-        case .dualShock4:  return "DualShock 4"
-        case .dualSense:   return "DualSense"
-        case .xboxSeries:  return "Xbox Wireless Controller"
+        case .native:          return "Native (Switch 2)"
+        case .ns2Passthrough:  return "NS2 Passthrough (raw)"
+        case .switchPro:       return "Switch Pro Controller"
+        case .dualShock4:      return "DualShock 4"
+        case .dualSense:       return "DualSense"
+        case .xboxSeries:      return "Xbox Wireless Controller"
         }
     }
 }
@@ -64,6 +66,30 @@ protocol HIDOutputSession: Sendable {
 extension HIDOutputSession {
     func buildSecondaryReports(_ state: ControllerState, source: any ControllerProfile) async -> [Data] { [] }
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {}
+}
+
+// MARK: - NS2 raw passthrough
+
+// Forwards raw BLE report 0x05 bytes as-is under a vendor HID descriptor.
+// SDL's Switch2 HIDAPI driver will fail its libusb init (unavoidable for virtual
+// devices) and fall back to the generic IOKit HID backend, which reads the
+// vendor report without understanding it. Use this mode for apps that speak NS2.
+struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
+    let profile: any ControllerProfile
+
+    var vendorID: UInt16    { profile.hidVendorID }
+    var productID: UInt16   { profile.hidProductID }
+    var productName: String { profile.name }
+    var manufacturer: String? { "Nintendo" }
+    var versionNumber: UInt16 { 0x0001 }
+    var descriptor: Data    { profile.vendorPassthroughDescriptor }
+
+    func makeSession() -> any HIDOutputSession { self }
+
+    func buildReport(_ state: ControllerState, source: any ControllerProfile) async -> Data {
+        guard let raw = state.rawBLEData else { return Data() }
+        return Data([0x05]) + raw.prefix(63)
+    }
 }
 
 // MARK: - Native passthrough

@@ -33,7 +33,8 @@ struct NS2ProControllerProfile: ControllerProfile {
                 NS2Commands.setFeatureMask(Self.featureMask),
                 NS2Commands.sendVibrationData,
                 NS2Commands.enableFeatures(Self.featureMask),
-            ]
+            ],
+            vibrationCharacteristic: CBUUID(string: "CC483F51-9258-427D-A939-630C31F72B05")
         )
     }
 
@@ -43,6 +44,92 @@ struct NS2ProControllerProfile: ControllerProfile {
     let hidProductID: UInt16 = 0x2069
 
     var hidDescriptor: Data { VirtualHIDDevice.standardGamepadDescriptor }
+    var vendorPassthroughDescriptor: Data { VirtualHIDDevice.ns2VendorDescriptor(reportID: 0x05, byteCount: 63) }
+
+    // NS2 Pro Output Report 0x02 (42 bytes, BLE handle 0x0012):
+    //   byte[0]      = 0x00 (Report ID for BT)
+    //   bytes[1..16] = Left  LRA sw2_lra_ops_t
+    //   bytes[17..32]= Right LRA sw2_lra_ops_t
+    //   bytes[33..41]= reserved
+    //
+    // sw2_lra_op_t.val (uint32 LE) bits: [8:0]=lf_freq, [9]=lf_en_tone,
+    //   [19:10]=lf_amp (10-bit), [28:20]=hf_freq (9-bit), [29-30]=unused, [31]=enable
+    // Frequencies from BlueRetro hidp/sw2.h:
+    //   L_HF=0xe1, L_LF=0x100; R_HF=0x1e1, R_LF=0x180
+    // Idle val: 0x1e100000 (enable=0, no amplitude)
+    // State byte: enable[6] | ops_cnt[5:4] | tid[3:0]
+    //
+    // SDL NS1 HD Rumble encoding (SDL_hidapi_switch.c EncodeRumble):
+    //   byte[1] = hf_amp (bits[7:1]) | hf_freq_msb (bit[0]); hf_amp range 0..200 (0xC8)
+    //   byte[2] = lf_freq | (lf_amp_packed >> 8 & 0x80)
+    //   byte[3] = lf_amp_packed & 0xFF; neutral=0x40, max=0x72 → effective 0..50
+    //
+    // SDL sends same encoding to both hdLeft and hdRight (NS1 has no per-motor split).
+    // Map: NS1 hf_amp → NS2 right LRA (high-freq physical motor)
+    //      NS1 lf_amp → NS2 left  LRA (low-freq physical motor)
+    // SDL NS2 rumble constants (libsdl-org/SDL, SDL_hidapi_switch2.c, EncodeHDRumble/UpdateRumble).
+    // RUMBLE_MAX caps amplitude to a safe level. hi/lo freq are the LRA centre frequencies SDL uses.
+    private static let rumbleMax = 29000
+    private static let hiFreq: UInt16 = 0x187
+    private static let loFreq: UInt16 = 0x112
+
+    func encodeVibration(hdLeft: Data, hdRight: Data, counter: UInt8) -> Data? {
+        guard hdLeft.count >= 4, hdRight.count >= 4 else { return nil }
+
+        // NS1 HF amplitude: byte[1] bits [7:1], range 0-200
+        let ns1HF = Int(hdRight[1] & 0xFE)
+        // NS1 LF amplitude: byte[3] range 0x40(zero)..0x72(max); half-step in byte[2] bit 7
+        let ns1LF = max(0, Int(hdLeft[3]) - 64) * 2 + ((hdLeft[2] & 0x80) != 0 ? 1 : 0)
+
+        // Route NS1 LF → left LRA (low-freq physical motor, heavier feel) via SDL lo_amp.
+        // Route NS1 HF → right LRA (high-freq physical motor, lighter feel) via SDL hi_amp.
+        // Clamp before UInt16 cast: out-of-range NS1 values can exceed RUMBLE_MAX.
+        let leftLoAmp  = UInt16(min(ns1LF * Self.rumbleMax / 101, Self.rumbleMax))
+        let rightHiAmp = UInt16(min(ns1HF * Self.rumbleMax / 200, Self.rumbleMax))
+
+        let tid = counter & 0xF
+
+        // Pro Output Report 0x02 (42 bytes, BLE handle 0x0012):
+        // [0x00]=0x00 (BT report ID); [0x01..0x06]=left LRA; [0x11..0x16]=right LRA.
+        var packet = Data(count: 42)
+        packet[0] = 0x00
+        packet[1]  = ((leftLoAmp  > 0 ? 0x50 : 0x10) | tid)
+        let l = encodeHDRumble(hiAmp: 0,          loAmp: leftLoAmp)
+        packet[2] = l[0]; packet[3] = l[1]; packet[4] = l[2]; packet[5] = l[3]; packet[6] = l[4]
+        packet[17] = ((rightHiAmp > 0 ? 0x50 : 0x10) | tid)
+        let r = encodeHDRumble(hiAmp: rightHiAmp, loAmp: 0)
+        packet[18] = r[0]; packet[19] = r[1]; packet[20] = r[2]; packet[21] = r[3]; packet[22] = r[4]
+
+        return packet
+    }
+
+    // SDL EncodeHDRumble bit layout (libsdl-org/SDL, SDL_hidapi_switch2.c):
+    // 40 bits: hi_freq[9:0] | hi_amp[15:6] | lo_freq[9:0] | lo_amp[15:6]
+    func encodeVibration(leftAmp: UInt8, rightAmp: UInt8, counter: UInt8) -> Data? {
+        let leftLoAmp  = UInt16(Int(leftAmp)  * Self.rumbleMax / 255)
+        let rightHiAmp = UInt16(Int(rightAmp) * Self.rumbleMax / 255)
+        let tid = counter & 0xF
+        var packet = Data(count: 42)
+        packet[0] = 0x00
+        packet[1]  = ((leftLoAmp  > 0 ? 0x50 : 0x10) | tid)
+        let l = encodeHDRumble(hiAmp: 0,          loAmp: leftLoAmp)
+        packet[2] = l[0]; packet[3] = l[1]; packet[4] = l[2]; packet[5] = l[3]; packet[6] = l[4]
+        packet[17] = ((rightHiAmp > 0 ? 0x50 : 0x10) | tid)
+        let r = encodeHDRumble(hiAmp: rightHiAmp, loAmp: 0)
+        packet[18] = r[0]; packet[19] = r[1]; packet[20] = r[2]; packet[21] = r[3]; packet[22] = r[4]
+        return packet
+    }
+
+    private func encodeHDRumble(hiAmp: UInt16, loAmp: UInt16) -> [UInt8] {
+        let hiF = Self.hiFreq, loF = Self.loFreq
+        return [
+            UInt8(hiF & 0xFF),
+            UInt8(((hiAmp >> 4) & 0xFC) | ((hiF >> 8) & 0x03)),
+            UInt8(truncatingIfNeeded: (hiAmp >> 12) | (loF << 4)),
+            UInt8((loAmp & 0xC0) | ((loF >> 4) & 0x3F)),
+            UInt8(loAmp >> 8),
+        ]
+    }
 
     // Pro descriptor: 4 sticks + 2 triggers + hat + 16 buttons. See VirtualHIDDevice
     // for layout. ZL/ZR are digital on Pro — we drive both the trigger axes (0/0xFF)

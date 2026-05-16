@@ -76,6 +76,9 @@ final class BridgeCoordinator {
     @ObservationIgnored
     private var dispatchTasks: [DeviceID: Task<Void, Never>] = [:]
 
+    @ObservationIgnored
+    private var rumbleRefreshBoxes: [DeviceID: RumbleRefreshBox] = [:]
+
     // Prevents App Nap / background throttling while a controller is active.
     // Wrapped so that deinit ends the activity regardless of isolation.
     @ObservationIgnored
@@ -106,18 +109,21 @@ final class BridgeCoordinator {
 
     private func output(for record: DeviceRecord, mode: HIDOutputMode) -> any HIDOutputProfile {
         switch mode {
-        case .native:     return NativeOutput(profile: record.profile)
-        case .switchPro:  return SwitchProOutput()
-        case .dualShock4: return DualShock4Output()
-        case .dualSense:  return DualSenseOutput()
-        case .xboxSeries: return XboxSeriesOutput()
+        case .native:          return NativeOutput(profile: record.profile)
+        case .ns2Passthrough:  return NS2PassthroughOutput(profile: record.profile)
+        case .switchPro:       return SwitchProOutput()
+        case .dualShock4:      return DualShock4Output()
+        case .dualSense:       return DualSenseOutput()
+        case .xboxSeries:      return XboxSeriesOutput()
         }
     }
 
     private func makeVirtualHID(for record: DeviceRecord, mode: HIDOutputMode) -> (VirtualHIDDevice, any HIDOutputSession)? {
         let out = output(for: record, mode: mode)
         let session = out.makeSession()
-        let onSetReport = makeSetReportHandler(session: session)
+        let rumbleBox = RumbleRefreshBox()
+        rumbleRefreshBoxes[record.id] = rumbleBox
+        let onSetReport = makeSetReportHandler(id: record.id, transport: transport(for: record.id.transport), profile: record.profile, outputMode: mode, rumbleRefresh: rumbleBox, session: session)
         guard let vhid = VirtualHIDDevice(
             descriptor: out.descriptor,
             vendorID: out.vendorID,
@@ -132,25 +138,75 @@ final class BridgeCoordinator {
         return (vhid, session)
     }
 
-    // Always-on diagnostic log for output reports the host sends us. Forwards
-    // the request to the session so stateful spoofs can dispatch handshake
-    // replies (e.g. Switch Pro subcommand → Input Report 0x21).
-    private func makeSetReportHandler(session: any HIDOutputSession) -> VirtualHIDDevice.SetReportHandler {
+    // Always-on diagnostic log for output reports the host sends us.
+    // Routes GC rumble (report 0x03), Switch Pro HD Rumble (0x10/0x01), and Xbox
+    // USB rumble (0x09) to the vibration characteristic, and Switch Pro spoof
+    // subcommands to the spoof handler.
+    private func makeSetReportHandler(
+        id deviceID: DeviceID,
+        transport: (any Transport)?,
+        profile: any ControllerProfile,
+        outputMode: HIDOutputMode,
+        rumbleRefresh: RumbleRefreshBox,
+        session: any HIDOutputSession
+    ) -> VirtualHIDDevice.SetReportHandler {
         return { device, type, id, data in
             let idStr = id.map { String(format: "0x%02X", $0.rawValue) } ?? "-"
             let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
             stderrLog("[hid] setReport type=\(type) id=\(idStr) len=\(data.count) [\(hex)]")
+            if type == .output, id?.rawValue == 0x03 {
+                // SDL sends 63 payload bytes; the controller only needs [reportID, seq, val, pad].
+                var packet = Data([0x03])
+                packet.append(contentsOf: data.prefix(3))
+                try? await transport?.sendVibration(packet, to: deviceID)
+            }
+            // Report 0x10 = pure rumble; 0x01 = rumble + subcommand. Both have the same
+            // header layout: [reportID, counter, hdLeft×4, hdRight×4, …]. CoreHID
+            // includes the report ID byte in `data`, so rumble starts at offset 2.
+            // data[1] is the SDL packet counter (0x00-0x0F), forwarded as the NS2 tid.
+            if type == .output, let rid = id?.rawValue, (rid == 0x10 || rid == 0x01), data.count >= 10 {
+                let counter = data[1]
+                let hdLeft  = data.subdata(in: 2..<6)
+                let hdRight = data.subdata(in: 6..<10)
+                if let vibPayload = profile.encodeVibration(hdLeft: hdLeft, hdRight: hdRight, counter: counter) {
+                    try? await transport?.sendVibration(vibPayload, to: deviceID)
+                }
+            }
+            // Xbox USB rumble: report 0x09, layout [id, 0x00, 0x00, 0x09, 0x00, 0x0F, LT, RT, LF, HF, …]
+            // NS2 Pro has no trigger motors; fold trigger bytes into the corresponding main motor LRA.
+            // Xbox sends start-then-stop ~1s apart; NS2 has a ~300ms motor timeout, so sustain
+            // rumble with a refresh loop until a zero-amplitude stop packet arrives.
+            if outputMode == .xboxSeries, type == .output, id?.rawValue == 0x09, data.count >= 10 {
+                let leftAmp  = max(data[6], data[8])
+                let rightAmp = max(data[7], data[9])
+                if leftAmp == 0 && rightAmp == 0 {
+                    rumbleRefresh.cancel()
+                    let counter = UInt8(truncatingIfNeeded: Int(Date().timeIntervalSince1970 * 100)) & 0xF
+                    if let p = profile.encodeVibration(leftAmp: 0, rightAmp: 0, counter: counter) {
+                        try? await transport?.sendVibration(p, to: deviceID)
+                    }
+                } else {
+                    let t = transport, p = profile, d = deviceID
+                    rumbleRefresh.replace(with: Task {
+                        while !Task.isCancelled {
+                            let counter = UInt8(truncatingIfNeeded: Int(Date().timeIntervalSince1970 * 100)) & 0xF
+                            if let payload = p.encodeVibration(leftAmp: leftAmp, rightAmp: rightAmp, counter: counter) {
+                                try? await t?.sendVibration(payload, to: d)
+                            }
+                            try? await Task.sleep(for: .milliseconds(80))
+                        }
+                    })
+                }
+            }
             await session.handleSetReport(device: device, type: type, id: id, data: data)
         }
     }
 
     private func hidTransport(for record: DeviceRecord, mode: HIDOutputMode) -> HIDDeviceTransport {
-        switch mode {
-        case .native:
-            return record.id.transport == .ble ? .bluetoothLowEnergy : .usb
-        case .switchPro, .dualShock4, .dualSense, .xboxSeries:
-            return .usb
-        }
+        // Always use .usb — BLE-transport virtual devices with output reports trigger
+        // kIOReturnNoPower (IOServiceOpen:0xe00002e2). The transport hint is independent
+        // of the real controller's connection and has no effect on input delivery.
+        return .usb
     }
 
     private func republishVirtualHID(for id: DeviceID, mode: HIDOutputMode) async {
@@ -158,6 +214,8 @@ final class BridgeCoordinator {
         record.virtualHID = nil
         devices[id]?.virtualHID = nil
         devices[id]?.session = nil
+        rumbleRefreshBoxes[id]?.cancel()
+        rumbleRefreshBoxes[id] = nil
         try? await Task.sleep(for: .milliseconds(150))
         guard let (vhid, session) = makeVirtualHID(for: record, mode: mode) else {
             devices[id]?.connectionState = .failed("Failed to create virtual HID device")
@@ -174,6 +232,7 @@ final class BridgeCoordinator {
         rateTask?.cancel()
         for task in dispatchTasks.values { task.cancel() }
         for cont in stateContinuations.values { cont.finish() }
+        for box in rumbleRefreshBoxes.values { box.cancel() }
     }
 
     func start() async {
@@ -372,6 +431,8 @@ final class BridgeCoordinator {
             dispatchTasks[id] = nil
             stateContinuations[id]?.finish()
             stateContinuations[id] = nil
+            rumbleRefreshBoxes[id]?.cancel()
+            rumbleRefreshBoxes[id] = nil
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
             devices[id]?.session = nil
@@ -407,6 +468,9 @@ final class BridgeCoordinator {
                 if let zeros = record.triggerZeros {
                     state.triggerL = state.triggerL >= zeros.left ? state.triggerL - zeros.left : 0
                     state.triggerR = state.triggerR >= zeros.right ? state.triggerR - zeros.right : 0
+                }
+                if record.activeOutputMode == .ns2Passthrough {
+                    state.rawBLEData = data
                 }
                 stateContinuations[id]?.yield(state)
             }
@@ -450,6 +514,27 @@ final class BridgeCoordinator {
 
     private func transport(for kind: TransportKind) -> (any Transport)? {
         transports.first { $0.kind == kind }
+    }
+}
+
+// Holds the active Xbox rumble refresh task for one device. Lock-protected so the
+// handler closure (any executor) and the main-actor coordinator can both cancel safely.
+private final class RumbleRefreshBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+
+    func replace(with newTask: Task<Void, Never>) {
+        lock.withLock {
+            task?.cancel()
+            task = newTask
+        }
+    }
+
+    func cancel() {
+        lock.withLock {
+            task?.cancel()
+            task = nil
+        }
     }
 }
 

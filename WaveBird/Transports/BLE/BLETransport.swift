@@ -21,6 +21,7 @@ actor BLETransport: Transport {
     private var matcherByDevice: [UUID: BLEMatcher] = [:]
     private var inputChars: [UUID: CBCharacteristic] = [:]
     private var outputChars: [UUID: CBCharacteristic] = [:]
+    private var vibrationChars: [UUID: CBCharacteristic] = [:]
     // Per device, a map of subscribed response-char UUID → its handle.
     private var responseHandles: [UUID: [CBUUID: UInt16]] = [:]
     private var pendingResponses: [UUID: (request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
@@ -104,6 +105,11 @@ actor BLETransport: Transport {
         guard let p = peripherals[id.raw], let ch = outputChars[id.raw] else {
             throw BLETransportError.unknownDevice
         }
+        p.writeValue(payload, for: ch, type: writeType(for: ch))
+    }
+
+    func sendVibration(_ payload: Data, to id: DeviceID) async throws {
+        guard let p = peripherals[id.raw], let ch = vibrationChars[id.raw] else { return }
         p.writeValue(payload, for: ch, type: writeType(for: ch))
     }
 
@@ -197,6 +203,7 @@ actor BLETransport: Transport {
         // Keep peripherals[]/matcherByDevice[] so connect() can be retried without a fresh advertisement.
         inputChars[peripheral.identifier] = nil
         outputChars[peripheral.identifier] = nil
+        vibrationChars[peripheral.identifier] = nil
         responseHandles[peripheral.identifier] = nil
         if let pending = pendingResponses.removeValue(forKey: peripheral.identifier) {
             pending.cont.resume(returning: nil)
@@ -210,6 +217,7 @@ actor BLETransport: Transport {
               let svc = services.first(where: { $0.uuid == m.serviceUUID }) else { return }
         var chars = [m.inputCharacteristic]
         if let out = m.outputCharacteristic { chars.append(out) }
+        if let vib = m.vibrationCharacteristic { chars.append(vib) }
         for rsp in m.responseCharacteristics { chars.append(rsp.uuid) }
         peripheral.discoverCharacteristics(chars, for: svc)
     }
@@ -233,6 +241,11 @@ actor BLETransport: Transport {
         if let outUUID = m.outputCharacteristic,
            let outCh = chars.first(where: { $0.uuid == outUUID }) {
             outputChars[peripheral.identifier] = outCh
+        }
+
+        if let vibUUID = m.vibrationCharacteristic,
+           let vibCh = chars.first(where: { $0.uuid == vibUUID }) {
+            vibrationChars[peripheral.identifier] = vibCh
         }
 
         // Give the CCCD writes a moment to land before issuing commands.

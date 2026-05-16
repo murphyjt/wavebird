@@ -47,7 +47,8 @@ struct NS2GameCubeProfile: ControllerProfile {
                 Self.triggerCalibrationReadCommand,
                 NS2Commands.sendVibrationData,
                 NS2Commands.enableFeatures(Self.featureMask),
-            ]
+            ],
+            vibrationCharacteristic: NS2Handle.uuid(0x0012, for: .gameCube)
         )
     }
 
@@ -56,7 +57,8 @@ struct NS2GameCubeProfile: ControllerProfile {
     let hidVendorID: UInt16 = 0x057E
     let hidProductID: UInt16 = 0x2073
 
-    var hidDescriptor: Data { VirtualHIDDevice.standardGamepadDescriptor }
+    var hidDescriptor: Data { VirtualHIDDevice.gcGamepadDescriptor }
+    var vendorPassthroughDescriptor: Data { VirtualHIDDevice.ns2VendorDescriptor(reportID: 0x05, byteCount: 63) }
 
     // GC standard-gamepad report: analog triggers on the trigger axes, d-pad on the hat,
     // full-pull L/R clicks live in their own button slots so consumers can distinguish
@@ -92,7 +94,37 @@ struct NS2GameCubeProfile: ControllerProfile {
         if s.contains(.r)       { b |= 1 << 11 }  // 12 — R full-pull click
         bytes[7] = UInt8(b & 0xFF)
         bytes[8] = UInt8(b >> 8)
-        return Data(bytes)
+        return Data([0x01]) + Data(bytes)
+    }
+
+    // NS2 GC Output Report 0x03 (42 bytes, BLE handle 0x0012):
+    //   byte[0]  = 0x00 (Report ID for BT)
+    //   byte[1]  = 0x50 (state, same pattern as Pro: enable=1, ops_cnt=1)
+    //   byte[2]  = 0x01 (motor on) or 0x00 (motor off)
+    //   bytes[3..41] = reserved zeros
+    //
+    // NS1 HD Rumble neutral = [0x00, 0x01, 0x40, 0x40]; amplitude=0 when
+    //   byte[1]&0xFE==0 AND byte[3]==0x40 AND byte[2]&0x80==0.
+    func encodeVibration(hdLeft: Data, hdRight: Data, counter: UInt8) -> Data? {
+        let on = hasNS1Amplitude(hdLeft) || hasNS1Amplitude(hdRight)
+        return gcMotorPacket(on: on, counter: counter)
+    }
+
+    func encodeVibration(leftAmp: UInt8, rightAmp: UInt8, counter: UInt8) -> Data? {
+        gcMotorPacket(on: leftAmp > 0 || rightAmp > 0, counter: counter)
+    }
+
+    private func gcMotorPacket(on: Bool, counter: UInt8) -> Data {
+        var packet = Data(count: 42)
+        packet[0] = 0x00
+        packet[1] = 0x50 | (counter & 0xF)
+        packet[2] = on ? 0x01 : 0x00
+        return packet
+    }
+
+    private func hasNS1Amplitude(_ d: Data) -> Bool {
+        guard d.count >= 4 else { return false }
+        return (d[1] & 0xFE) != 0 || d[3] != 0x40 || (d[2] & 0x80) != 0
     }
 
     // GC layout: ZL/Z are the top digital shoulders, L/R are the bottom analog

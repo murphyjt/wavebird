@@ -39,13 +39,15 @@ struct IMUSample: Sendable, Hashable {
 }
 
 struct ControllerState: Sendable {
-    var leftStick:  SIMD2<Int8>
-    var rightStick: SIMD2<Int8>
-    var triggerL:   UInt8
-    var triggerR:   UInt8
-    var buttons:    ButtonSet
-    var imu:        IMUSample?
-    var timestamp:  ContinuousClock.Instant
+    var leftStick:   SIMD2<Int8>
+    var rightStick:  SIMD2<Int8>
+    var triggerL:    UInt8
+    var triggerR:    UInt8
+    var buttons:     ButtonSet
+    var imu:         IMUSample?
+    var timestamp:   ContinuousClock.Instant
+    // Raw BLE report bytes, set only in .ns2Passthrough mode.
+    var rawBLEData:  Data? = nil
 
     static var zero: ControllerState {
         ControllerState(

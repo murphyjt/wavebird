@@ -20,6 +20,27 @@ protocol ControllerProfile: Sendable {
     // L1, not L2 — even though both ZL and the Pro's L2-equivalent live in
     // the same ButtonSet slot for parsing convenience.
     func standardShoulders(_ state: ControllerState) -> StandardShoulders
+
+    // Encode a BLE vibration payload from NS1-format HD Rumble bytes.
+    // hdLeft/hdRight are each 4 bytes (NS1 amplitude+frequency encoding).
+    // counter is the SDL output-report packet counter (0x00-0x0F), used as
+    // the 4-bit tid field in the NS2 LRA state byte to prevent deduplication.
+    // Returns nil if the controller has no motor or does not support rumble.
+    func encodeVibration(hdLeft: Data, hdRight: Data, counter: UInt8) -> Data?
+
+    // Direct-amplitude variant for spoofs that expose 8-bit LF/HF motor values directly
+    // (e.g. Xbox USB output report 0x09). leftAmp = low-freq motor, rightAmp = high-freq motor.
+    // Returns nil if the controller has no motor or does not support rumble.
+    func encodeVibration(leftAmp: UInt8, rightAmp: UInt8, counter: UInt8) -> Data?
+
+    // Vendor passthrough descriptor: declares a single vendor input report
+    // (usage page 0xFF00, report ID 0x05, 63 bytes) for ns2Passthrough mode.
+    var vendorPassthroughDescriptor: Data { get }
+}
+
+extension ControllerProfile {
+    func encodeVibration(hdLeft: Data, hdRight: Data, counter: UInt8) -> Data? { nil }
+    func encodeVibration(leftAmp: UInt8, rightAmp: UInt8, counter: UInt8) -> Data? { nil }
 }
 
 // Cross-controller shoulder/trigger model. "Bumper" = top secondary, "trigger"
@@ -58,6 +79,7 @@ struct BLEMatcher: Sendable {
     let outputCharacteristic: CBUUID?
     let responseCharacteristics: [ResponseChannel]
     let initCommands: [Data]
+    let vibrationCharacteristic: CBUUID?
 }
 
 struct ResponseChannel: Sendable {
