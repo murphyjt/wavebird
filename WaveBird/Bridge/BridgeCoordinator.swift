@@ -22,11 +22,9 @@ struct DeviceRecord: Identifiable {
     var connectionState: DeviceConnectionState
     var virtualHID: VirtualHIDDevice?
     var reportRate: Double = 0       // reports received per second over BLE
-    var controllerRate: Double = 0   // counter ticks produced by the controller per second
     var serial: String? = nil
     var firmware: FirmwareInfo? = nil
-    var triggerZeros: (left: UInt8, right: UInt8)? = nil
-    var calibration = StickCalibrationPair()
+    var calibration = ControllerCalibration()
     var outputModeID: String
     // Mode captured at the moment the virtual HID device was created. We
     // intentionally keep using this instead of the record's live outputModeID
@@ -60,12 +58,6 @@ final class BridgeCoordinator {
 
     @ObservationIgnored
     private var reportCounts: [DeviceID: Int] = [:]
-
-    @ObservationIgnored
-    private var lastCounter: [DeviceID: UInt32] = [:]
-
-    @ObservationIgnored
-    private var counterDeltas: [DeviceID: Int] = [:]
 
     // Per-device latest-state channels. The consumer yields parsed states here
     // (non-blocking); a separate dispatch task picks up the newest and sends it
@@ -242,14 +234,7 @@ final class BridgeCoordinator {
         for id in devices.keys where reportCounts[id] == nil {
             devices[id]?.reportRate = 0
         }
-        for (id, delta) in counterDeltas {
-            devices[id]?.controllerRate = Double(delta)
-        }
-        for id in devices.keys where counterDeltas[id] == nil {
-            devices[id]?.controllerRate = 0
-        }
         reportCounts.removeAll(keepingCapacity: true)
-        counterDeltas.removeAll(keepingCapacity: true)
     }
 
     func toggleScan() async {
@@ -341,56 +326,17 @@ final class BridgeCoordinator {
             if let response {
                 let label = response.sourceHandle.map { String(format: "resp 0x%04X", $0) } ?? "resp       "
                 FileHandle.standardError.write(Data("[ble] \(label): \(hex(response.data))\n".utf8))
-                switch request.first {
-                case 0x02:
-                    // Strip 8-byte ACK header + 8-byte read-info to get the flash data.
-                    let flashData = response.data.dropFirst(16)
-                    // cmd 0x02/0x04 request: read address is little-endian at bytes [12..15].
-                    var address = 0
-                    if request.count >= 16 {
-                        let b = request.startIndex
-                        address = Int(request[b + 12])
-                            | (Int(request[b + 13]) << 8)
-                            | (Int(request[b + 14]) << 16)
-                            | (Int(request[b + 15]) << 24)
-                    }
+                // Flash-read responses (cmd 0x02) get a per-address hexdump so
+                // unknown flash regions stay readable when adding Pro/JoyCon support.
+                if request.first == 0x02, let address = NS2Responses.flashReadAddress(of: request) {
                     FileHandle.standardError.write(Data("[ble] flash data:\n".utf8))
-                    for line in hexdumpLines(flashData, baseOffset: address) {
+                    for line in hexdumpLines(response.data.dropFirst(16), baseOffset: address) {
                         FileHandle.standardError.write(Data("[ble]   \(line)\n".utf8))
                     }
-                    switch address {
-                    case 0x13000:
-                        if let serial = NS2Responses.parseSerial(flashData) {
-                            devices[id]?.serial = serial
-                            FileHandle.standardError.write(Data("[ble] serial:        \(serial)\n".utf8))
-                        }
-                    case 0x13140:
-                        if let zeros = GameCubeProfile.parseTriggerZeros(flashData) {
-                            devices[id]?.triggerZeros = zeros
-                            FileHandle.standardError.write(Data("[ble] trigger zeros: L=\(zeros.left) R=\(zeros.right)\n".utf8))
-                        }
-                    case 0x13080:
-                        if let cal = NS2Responses.parseStickCalibration(flashData) {
-                            devices[id]?.calibration.left = cal
-                            FileHandle.standardError.write(Data("[ble] L stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
-                        }
-                    case 0x130C0:
-                        if let cal = NS2Responses.parseStickCalibration(flashData) {
-                            devices[id]?.calibration.right = cal
-                            FileHandle.standardError.write(Data("[ble] R stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
-                        }
-                    default:
-                        break
-                    }
-                case 0x10:
-                    // Strip 8-byte ACK header to get the firmware payload.
-                    let payload = response.data.dropFirst(8)
-                    if let info = NS2Responses.parseFirmwareInfo(payload) {
-                        devices[id]?.firmware = info
-                        FileHandle.standardError.write(Data("[ble] firmware:      \(info)\n".utf8))
-                    }
-                default:
-                    break
+                }
+                if let profile = devices[id]?.profile,
+                   let meta = profile.handleCommandResponse(request: request, response: response.data) {
+                    mergeMetadata(meta, into: id)
                 }
             } else {
                 FileHandle.standardError.write(Data("[ble] resp:          (none)\n".utf8))
@@ -411,46 +357,47 @@ final class BridgeCoordinator {
             devices[id]?.virtualHID = nil
             devices[id]?.session = nil
             devices[id]?.reportRate = 0
-            devices[id]?.controllerRate = 0
             reportCounts[id] = nil
-            counterDeltas[id] = nil
-            lastCounter[id] = nil
 
         case .reportReceived(let id, let reportID, let data):
             guard let record = devices[id] else { return }
             lastReportSnapshot = ReportSnapshot(deviceID: id, data: data)
             reportCounts[id, default: 0] += 1
-            // 32-bit LE counter at the head of the input report. Accumulate the per-report
-            // delta so we can compare BLE delivery rate against controller production rate.
-            if data.count >= 4 {
-                let b = data.startIndex
-                let counter = UInt32(data[b])
-                    | (UInt32(data[b + 1]) << 8)
-                    | (UInt32(data[b + 2]) << 16)
-                    | (UInt32(data[b + 3]) << 24)
-                if let prev = lastCounter[id] {
-                    counterDeltas[id, default: 0] += Int(counter &- prev)
-                }
-                lastCounter[id] = counter
-            }
             let parsed: ControllerState?
             switch kind {
             case .ble: parsed = record.profile.parseBLEReport(data, calibration: record.calibration)
             case .usb: parsed = record.profile.parseUSBReport(data, reportID: reportID ?? 0, calibration: record.calibration)
             }
             if var state = parsed {
-                if let zeros = record.triggerZeros {
-                    state.triggerL = state.triggerL >= zeros.left ? state.triggerL - zeros.left : 0
-                    state.triggerR = state.triggerR >= zeros.right ? state.triggerR - zeros.right : 0
-                }
-                if record.activeOutputModeID == "ns2Passthrough" {
-                    state.rawBLEData = data
-                }
+                if kind == .ble { state.rawBLEData = data }
                 stateContinuations[id]?.yield(state)
             }
 
         case .error(_, let msg):
             stderrLog(msg)
+        }
+    }
+
+    private func mergeMetadata(_ meta: ControllerMetadata, into id: DeviceID) {
+        if let serial = meta.serial {
+            devices[id]?.serial = serial
+            FileHandle.standardError.write(Data("[ble] serial:        \(serial)\n".utf8))
+        }
+        if let firmware = meta.firmware {
+            devices[id]?.firmware = firmware
+            FileHandle.standardError.write(Data("[ble] firmware:      \(firmware)\n".utf8))
+        }
+        if let zeros = meta.triggerZeros {
+            devices[id]?.calibration.triggerZeros = zeros
+            FileHandle.standardError.write(Data("[ble] trigger zeros: L=\(zeros.left) R=\(zeros.right)\n".utf8))
+        }
+        if let cal = meta.leftCalibration {
+            devices[id]?.calibration.left = cal
+            FileHandle.standardError.write(Data("[ble] L stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
+        }
+        if let cal = meta.rightCalibration {
+            devices[id]?.calibration.right = cal
+            FileHandle.standardError.write(Data("[ble] R stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
         }
     }
 

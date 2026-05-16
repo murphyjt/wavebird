@@ -82,8 +82,6 @@ struct ContentView: View {
                         HStack(spacing: 4) {
                             Text("•").foregroundStyle(.secondary)
                             Text("\(Int(record.reportRate)) Hz")
-                            Text("(\(Int(record.controllerRate)) ctrl)")
-                                .foregroundStyle(.tertiary)
                         }
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)

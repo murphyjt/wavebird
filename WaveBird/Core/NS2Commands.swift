@@ -143,6 +143,43 @@ enum NS2Responses {
         let mnY = UInt16(flashBlock[b + 7] >> 4) | (UInt16(flashBlock[b + 8]) << 4)
         return StickCalibration(neutralX: nX, neutralY: nY, maxX: mxX, maxY: mxY, minX: mnX, minY: mnY)
     }
+
+    // Extract the little-endian flash address from a cmd 0x02 / 0x04 request.
+    // Exposed so the coordinator can label flash hexdumps without re-parsing.
+    static func flashReadAddress(of request: Data) -> Int? {
+        guard request.count >= 16 else { return nil }
+        let b = request.startIndex
+        return Int(request[b + 12])
+            | (Int(request[b + 13]) << 8)
+            | (Int(request[b + 14]) << 16)
+            | (Int(request[b + 15]) << 24)
+    }
+
+    // Default ControllerProfile.handleCommandResponse dispatch: maps the
+    // addresses every NS2 controller shares (serial / firmware / stick cal)
+    // to their parsers. Profiles call this from their override after handling
+    // any controller-specific addresses (e.g. GC trigger zeros at 0x13140).
+    static func parseStandard(request: Data, response: Data) -> ControllerMetadata? {
+        switch request.first {
+        case 0x02:
+            guard let address = flashReadAddress(of: request) else { return nil }
+            let flashData = response.dropFirst(16)
+            switch address {
+            case 0x13000:
+                return parseSerial(flashData).map { ControllerMetadata(serial: $0) }
+            case 0x13080:
+                return parseStickCalibration(flashData).map { ControllerMetadata(leftCalibration: $0) }
+            case 0x130C0:
+                return parseStickCalibration(flashData).map { ControllerMetadata(rightCalibration: $0) }
+            default:
+                return nil
+            }
+        case 0x10:
+            return parseFirmwareInfo(response.dropFirst(8)).map { ControllerMetadata(firmware: $0) }
+        default:
+            return nil
+        }
+    }
 }
 
 // Stick decoding + calibration helpers, shared across NS2 profiles. Report 0x05 (and the

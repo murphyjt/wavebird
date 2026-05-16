@@ -158,19 +158,19 @@ struct ProControllerProfile: ControllerProfile {
         return Data(bytes)
     }
 
-    func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState? {
+    func parseBLEReport(_ data: Data, calibration: ControllerCalibration) -> ControllerState? {
         guard data.count >= 62 else { return nil }
         return Self.parse0x05(data, offset: 0, calibration: calibration)
     }
 
-    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: StickCalibrationPair) -> ControllerState? {
+    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: ControllerCalibration) -> ControllerState? {
         guard reportID == 0x05, data.count >= 62 else { return nil }
         return Self.parse0x05(data, offset: 0, calibration: calibration)
     }
 
     // Shared Report 0x05 layout (hid_reports.md). Pro-specific button semantics: bit 7 is
     // ZR (not Z), bits 8/9 are Minus/Plus (not Start), bits 10/11 are stick clicks.
-    static func parse0x05(_ data: Data, offset: Int, calibration: StickCalibrationPair) -> ControllerState {
+    static func parse0x05(_ data: Data, offset: Int, calibration: ControllerCalibration) -> ControllerState {
         let base = data.startIndex.advanced(by: offset)
         let (lx, ly) = NS2Sticks.unpack(data, at: base + 10)
         let (rx, ry) = NS2Sticks.unpack(data, at: base + 13)

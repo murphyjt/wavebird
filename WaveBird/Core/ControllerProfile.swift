@@ -11,8 +11,8 @@ protocol ControllerProfile: Sendable {
     var hidProductID: UInt16 { get }
 
     func buildHIDReport(_ state: ControllerState) -> Data
-    func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState?
-    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: StickCalibrationPair) -> ControllerState?
+    func parseBLEReport(_ data: Data, calibration: ControllerCalibration) -> ControllerState?
+    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: ControllerCalibration) -> ControllerState?
 
     // Encode a normalized RumbleCommand into a BLE vibration payload for this
     // controller. Profiles inspect leftHD/rightHD (NS1 HD Rumble bytes) first
@@ -24,10 +24,31 @@ protocol ControllerProfile: Sendable {
     // Vendor passthrough descriptor: declares a single vendor input report
     // (usage page 0xFF00, report ID 0x05, 63 bytes) for ns2Passthrough mode.
     var vendorPassthroughDescriptor: Data { get }
+
+    // Parse a BLE command response into structured device metadata. The
+    // default implementation handles the addresses common to every NS2
+    // controller (serial / firmware / stick calibration); profiles override
+    // to add controller-specific reads (e.g. GC trigger zeros at 0x13140).
+    func handleCommandResponse(request: Data, response: Data) -> ControllerMetadata?
 }
 
 extension ControllerProfile {
     func encodeRumble(_ cmd: RumbleCommand) -> Data? { nil }
+
+    func handleCommandResponse(request: Data, response: Data) -> ControllerMetadata? {
+        NS2Responses.parseStandard(request: request, response: response)
+    }
+}
+
+// Structured fields extracted from a controller's BLE command responses.
+// Returned by ControllerProfile.handleCommandResponse; the coordinator merges
+// any non-nil field into the device record without knowing what produced it.
+struct ControllerMetadata: Sendable {
+    var serial: String? = nil
+    var firmware: FirmwareInfo? = nil
+    var triggerZeros: TriggerZeros? = nil
+    var leftCalibration: StickCalibration? = nil
+    var rightCalibration: StickCalibration? = nil
 }
 
 // Normalized rumble command produced by HIDOutputSession.parseRumble. The
@@ -88,9 +109,20 @@ struct StickCalibration: Sendable, Equatable {
     var minY: UInt16
 }
 
-struct StickCalibrationPair: Sendable, Equatable {
+// Per-device calibration aggregate populated from the BLE init handshake
+// responses. Profiles consume it inside their parsers (stick mapping uses
+// left/right; GC applies triggerZeros to the raw trigger axes). Keep this as
+// a single bag so parser signatures stay stable as new calibration kinds
+// land (e.g. IMU offsets, JoyCon SR/SL).
+struct ControllerCalibration: Sendable, Equatable {
     var left: StickCalibration? = nil
     var right: StickCalibration? = nil
+    var triggerZeros: TriggerZeros? = nil
+}
+
+struct TriggerZeros: Sendable, Equatable {
+    var left: UInt8
+    var right: UInt8
 }
 
 struct BLEMatcher: Sendable {

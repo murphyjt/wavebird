@@ -17,10 +17,19 @@ struct GameCubeProfile: ControllerProfile {
     // Input: the 2-byte flash slice read from 0x13140 (response with ACK + read-info stripped).
     //   [0] left trigger rest position, [1] right trigger rest position
     // Layout from SDL (libsdl-org/SDL: src/joystick/hidapi/SDL_hidapi_switch2.c).
-    static func parseTriggerZeros(_ flashData: Data) -> (left: UInt8, right: UInt8)? {
+    static func parseTriggerZeros(_ flashData: Data) -> TriggerZeros? {
         guard flashData.count >= 2 else { return nil }
         let b = flashData.startIndex
-        return (flashData[b], flashData[b + 1])
+        return TriggerZeros(left: flashData[b], right: flashData[b + 1])
+    }
+
+    func handleCommandResponse(request: Data, response: Data) -> ControllerMetadata? {
+        if request.first == 0x02,
+           NS2Responses.flashReadAddress(of: request) == 0x13140,
+           let zeros = Self.parseTriggerZeros(response.dropFirst(16)) {
+            return ControllerMetadata(triggerZeros: zeros)
+        }
+        return NS2Responses.parseStandard(request: request, response: response)
     }
 
     var bleMatcher: BLEMatcher? {
@@ -124,17 +133,17 @@ struct GameCubeProfile: ControllerProfile {
         return (d[1] & 0xFE) != 0 || d[3] != 0x40 || (d[2] & 0x80) != 0
     }
 
-    func parseBLEReport(_ data: Data, calibration: StickCalibrationPair) -> ControllerState? {
+    func parseBLEReport(_ data: Data, calibration: ControllerCalibration) -> ControllerState? {
         guard data.count >= 62 else { return nil }
         return Self.parse0x05(data, offset: 0, calibration: calibration)
     }
 
-    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: StickCalibrationPair) -> ControllerState? {
+    func parseUSBReport(_ data: Data, reportID: UInt8, calibration: ControllerCalibration) -> ControllerState? {
         guard reportID == 0x05, data.count >= 62 else { return nil }
         return Self.parse0x05(data, offset: 0, calibration: calibration)
     }
 
-    static func parse0x05(_ data: Data, offset: Int, calibration: StickCalibrationPair) -> ControllerState {
+    static func parse0x05(_ data: Data, offset: Int, calibration: ControllerCalibration) -> ControllerState {
         let base = data.startIndex.advanced(by: offset)
         let (lx, ly) = NS2Sticks.unpack(data, at: base + 10)
         let (rx, ry) = NS2Sticks.unpack(data, at: base + 13)
@@ -162,8 +171,14 @@ struct GameCubeProfile: ControllerProfile {
         if btn & (1 << 22) != 0 { buttons.insert(.l) }
         if btn & (1 << 23) != 0 { buttons.insert(.zl) }
 
-        let triggerL = data[base + 60]
-        let triggerR = data[base + 61]
+        // Apply the per-controller trigger rest position read from flash 0x13140
+        // during init: subtract so a released trigger reads 0. Falls through to
+        // the raw byte when calibration hasn't arrived yet.
+        let zeros = calibration.triggerZeros
+        let rawTriggerL = data[base + 60]
+        let rawTriggerR = data[base + 61]
+        let triggerL = zeros.map { rawTriggerL >= $0.left  ? rawTriggerL - $0.left  : 0 } ?? rawTriggerL
+        let triggerR = zeros.map { rawTriggerR >= $0.right ? rawTriggerR - $0.right : 0 } ?? rawTriggerR
         // GC layout: ZL/Z are the top digital shoulders, L/R are the bottom
         // analog triggers (each click-detects at full pull). Tops → bumpers,
         // L/R clicks → trigger-digital, analog from the calibrated reading.

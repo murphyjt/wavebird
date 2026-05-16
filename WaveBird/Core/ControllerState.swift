@@ -50,7 +50,9 @@ struct ControllerState: Sendable {
     // controller's native button layout so output sessions don't need to
     // translate Nintendo ZL/Z/L/R semantics themselves.
     var shoulders:   StandardShoulders = StandardShoulders()
-    // Raw BLE report bytes, set only in .ns2Passthrough mode.
+    // Raw BLE report bytes when the source transport is BLE; nil for USB.
+    // Output sessions read this when they need the unparsed report (e.g.
+    // NS2 passthrough mode forwards it verbatim).
     var rawBLEData:  Data? = nil
 
     static var zero: ControllerState {
