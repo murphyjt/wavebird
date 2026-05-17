@@ -87,12 +87,21 @@ protocol HIDOutputSession: Sendable {
     // controller's vibration channel. Return nil for reports unrelated to
     // rumble (handshake, LED, etc. — those go through handleSetReport).
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand?
+
+    // Periodic re-send interval for the last non-stop rumble command. nil =
+    // the host drives cadence itself (DS4/DualSense send ~30 Hz; Pro/native
+    // GC send when the game requests). Non-nil = the host fires once and
+    // expects the device to sustain (Xbox), so the coordinator re-emits at
+    // this period until either a new command arrives or a stop frame
+    // cancels the loop.
+    var refreshInterval: Duration? { get }
 }
 
 extension HIDOutputSession {
     func buildSecondaryReports(_ state: ControllerState) async -> [Data] { [] }
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {}
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? { nil }
+    var refreshInterval: Duration? { nil }
 }
 
 // MARK: - NS2 raw passthrough
@@ -145,8 +154,8 @@ struct NativeOutput: HIDOutputProfile, HIDOutputSession {
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
         guard type == .output, id?.rawValue == 0x03, data.count >= 3 else { return nil }
         let base = data.startIndex
-        let on: UInt8 = data[base + 2] > 0 ? 0xFF : 0
-        return RumbleCommand(leftAmp: on, rightAmp: on, transmitCounter: data[base + 1])
+        let on: UInt16 = data[base + 2] > 0 ? 0xFFFF : 0
+        return RumbleCommand(leftAmp: on, rightAmp: on)
     }
 }
 

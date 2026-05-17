@@ -147,18 +147,18 @@ final class BridgeCoordinator {
 
             if let cmd = session.parseRumble(type: type, id: id, data: data) {
                 rumbleRefresh.cancel()
-                // Stamp a fresh counter on every outgoing command. GC/Pro dedupe
+                // Pump a fresh counter on every outgoing command. GC/Pro dedupe
                 // byte-identical successive payloads, so the tid nibble must vary
                 // even when amplitude doesn't — including when the host drives the
                 // cadence itself (DS4/DualSense send ~30 Hz at constant amplitude).
-                if let payload = profile.encodeRumble(cmd.withCounter(rumbleRefresh.nextCounter())) {
+                if let payload = profile.encodeRumble(cmd, sequence: rumbleRefresh.nextCounter()) {
                     try? await transport?.sendVibration(payload, to: deviceID)
                 }
-                if let interval = cmd.refreshInterval, !cmd.isStop {
+                if let interval = session.refreshInterval, !cmd.isStop {
                     rumbleRefresh.replace(with: Task {
                         while !Task.isCancelled {
                             try? await Task.sleep(for: interval)
-                            if let payload = profile.encodeRumble(cmd.withCounter(rumbleRefresh.nextCounter())) {
+                            if let payload = profile.encodeRumble(cmd, sequence: rumbleRefresh.nextCounter()) {
                                 try? await transport?.sendVibration(payload, to: deviceID)
                             }
                         }

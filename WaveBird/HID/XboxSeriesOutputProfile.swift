@@ -41,6 +41,11 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
 
     func makeSession() -> any HIDOutputSession { self }
 
+    // Xbox sends one start frame and one stop frame ~1 s apart; the NS2
+    // motor times out after ~300 ms. Ask the coordinator to keep the motor
+    // alive between host frames.
+    var refreshInterval: Duration? { .milliseconds(80) }
+
     static let descriptorBytes: Data = Data([
         0x05, 0x01,
         0x09, 0x05,
@@ -220,11 +225,9 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
     //     [id, 0x00, 0x00, 0x09, 0x00, 0x0F, LT, RT, L, R, duration, delay, loop]
     //
     // Both paths send magnitudes as 0..100 percent (Xbox GIP convention);
-    // rescale to 0..255 so Pro's LRA encoder reaches full amplitude. NS2 Pro
-    // has no trigger motors, so fold trigger magnitudes into the main motor
-    // with max(trigger, motor). Xbox sends start-then-stop with a long gap;
-    // the NS2 motor times out after ~300 ms, so we ask the coordinator to
-    // refresh every 80 ms until the next set-report arrives.
+    // rescale to 0..65535 so the NS2 LRA encoder reaches full amplitude.
+    // NS2 Pro has no trigger motors, so fold trigger magnitudes into the
+    // main motor with max(trigger, motor).
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
         guard type == .output else { return nil }
         let b = data.startIndex
@@ -241,13 +244,10 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         default:
             return nil
         }
-        func scale(_ v: UInt8) -> UInt8 { UInt8(min(255, Int(v) * 255 / 100)) }
-        let leftAmp  = scale(max(ltMag, lMag))
-        let rightAmp = scale(max(rtMag, rMag))
+        func scale(_ v: UInt8) -> UInt16 { UInt16(min(65535, Int(v) * 65535 / 100)) }
         return RumbleCommand(
-            leftAmp: leftAmp,
-            rightAmp: rightAmp,
-            refreshInterval: (leftAmp == 0 && rightAmp == 0) ? nil : .milliseconds(80)
+            leftAmp: scale(max(ltMag, lMag)),
+            rightAmp: scale(max(rtMag, rMag))
         )
     }
 

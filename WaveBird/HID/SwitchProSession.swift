@@ -99,16 +99,66 @@ actor SwitchProSession: HIDOutputSession {
     // rumble) or 0x01 (rumble + subcommand). Both share the same header:
     // [reportID, counter, hdLeft×4, hdRight×4, …]. The 0x01 report's
     // subcommand bytes are handled separately via handleSetReport.
+    //
+    // Each 4-byte HD block packs (hi_freq, hi_amp, lo_freq, lo_amp). NS1 L
+    // motor is LF-tuned, R motor is HF-tuned, so we read the LF amplitude
+    // out of the left block and the HF amplitude out of the right block,
+    // then reverse the encoder's lookup table to recover the original
+    // 16-bit amplitude the game requested. Frequency is discarded — NS2
+    // LRA encoders use fixed motor frequencies regardless.
     nonisolated func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
         guard type == .output, let rid = id?.rawValue,
               rid == 0x10 || rid == 0x01,
               data.count >= 10 else { return nil }
-        let base = data.startIndex
-        return RumbleCommand(
-            leftHD: data.subdata(in: (base + 2)..<(base + 6)),
-            rightHD: data.subdata(in: (base + 6)..<(base + 10)),
-            transmitCounter: data[base + 1]
-        )
+        let b = data.startIndex
+        let lfAmp = Self.decodeNS1LowAmp(pack: data[b + 4], low: data[b + 5])
+        let hfAmp = Self.decodeNS1HighAmp(data[b + 7])
+        return RumbleCommand(leftAmp: lfAmp, rightAmp: hfAmp)
+    }
+
+    // NS1 HD Rumble amplitude lookup. The encoder (SDL EncodeRumbleHighAmplitude
+    // / EncodeRumbleLowAmplitude) quantizes a 16-bit input amplitude onto one
+    // of 101 output codes. The mapping is non-linear (a hardware response
+    // curve), so reversing it by linear interpolation on the code index
+    // produces audibly wrong loudness in the middle of the range. This table
+    // is the per-code threshold (the maximum input amplitude that maps to
+    // that code) — using it for decode preserves the perceptual amplitude
+    // the encoder targeted.
+    //
+    // Both HF and LF tables share the same threshold column in SDL; only the
+    // output codes differ. Source: dekuNukem/Nintendo_Switch_Reverse_Engineering
+    // rumble_data_table.md, transcribed from libsdl-org/SDL
+    // src/joystick/hidapi/SDL_hidapi_switch.c. See README Credits.
+    private static let ns1AmpThresholds: [UInt16] = [
+            0,   514,   775,   921,  1096,  1303,  1550,  1843,  2192,  2606,
+         3100,  3686,  4383,  5213,  6199,  7372,  7698,  8039,  8395,  8767,
+         9155,  9560,  9984, 10426, 10887, 11369, 11873, 12398, 12947, 13520,
+        14119, 14744, 15067, 15397, 15734, 16079, 16431, 16790, 17158, 17534,
+        17918, 18310, 18711, 19121, 19540, 19967, 20405, 20851, 21308, 21775,
+        22251, 22739, 23236, 23745, 24265, 24797, 25340, 25894, 26462, 27041,
+        27633, 28238, 28856, 29488, 30134, 30794, 31468, 32157, 32861, 33581,
+        34316, 35068, 35836, 36620, 37422, 38242, 39079, 39935, 40809, 41703,
+        42616, 43549, 44503, 45477, 46473, 47491, 48531, 49593, 50679, 51789,
+        52923, 54082, 55266, 56476, 57713, 58977, 60268, 61588, 62936, 64315,
+        65535,
+    ]
+
+    // HF amp byte is even-valued 0x00..0xC8 (101 codes in steps of 2). Index
+    // into the threshold table is `byte >> 1`. The low bit of byte[1] in the
+    // 4-byte block belongs to the freq high bit, so mask it off first.
+    static func decodeNS1HighAmp(_ packed: UInt8) -> UInt16 {
+        let index = min(100, Int(packed & 0xFE) >> 1)
+        return ns1AmpThresholds[index]
+    }
+
+    // LF amp is split across two bytes: byte[3] holds the low byte of a
+    // 16-bit encoded value (0x40..0x72), and byte[2] bit 7 is a half-step
+    // selector. Reconstruct the 0..100 code index from those.
+    static func decodeNS1LowAmp(pack: UInt8, low: UInt8) -> UInt16 {
+        let base = max(0, Int(low) - 0x40) * 2
+        let halfStep = (pack & 0x80) != 0 ? 1 : 0
+        let index = min(100, base + halfStep)
+        return ns1AmpThresholds[index]
     }
 
     // MARK: - Subcommand reply construction

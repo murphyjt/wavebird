@@ -96,12 +96,15 @@ or the WebHID / Gamepad APIs (Chrome / Safari gamepad testers like
 - [switch2_controller_research](https://github.com/ndeadly/switch2_controller_research)
   by ndeadly — detailed write-ups of the Switch 2 BLE / HID protocol.
 - [SDL](https://github.com/libsdl-org/SDL) — `SDL_hidapi_switch2.c` for the
-  factory trigger-calibration flash layout; `SDL_hidapi_switch.c` for the
-  Switch 1 Pro Controller subcommand handshake the Switch Pro spoof
-  emulates (zlib).
+  factory trigger-calibration flash layout and the NS2 LRA `EncodeHDRumble`
+  bit packing; `SDL_hidapi_switch.c` for the Switch 1 Pro Controller
+  subcommand handshake the Switch Pro spoof emulates, and the NS1 HD Rumble
+  amplitude table we invert to decode the spoof's incoming rumble (zlib).
 - [dekuNukem/Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering)
   — write-up of the Switch 1 Bluetooth HID protocol (subcommand IDs, report
-  0x30 button/stick layout) used by the Switch Pro spoof.
+  0x30 button/stick layout) used by the Switch Pro spoof, and the
+  `rumble_data_table.md` amplitude curve we use to decode NS1 HD Rumble
+  bytes back into 16-bit amplitudes before re-encoding for NS2 LRA.
 
 ## License
 

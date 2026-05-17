@@ -74,25 +74,17 @@ struct ProControllerProfile: ControllerProfile {
     // SDL EncodeHDRumble bit layout (libsdl-org/SDL, SDL_hidapi_switch2.c):
     // 40 bits: hi_freq[9:0] | hi_amp[15:6] | lo_freq[9:0] | lo_amp[15:6]
     //
-    // When the command carries NS1 HD bytes we extract amplitudes from them
-    // (HF byte[1] bits[7:1], LF byte[3] range 0x40..0x72 with half-step in
-    // byte[2] bit 7). Otherwise we map the 8-bit leftAmp/rightAmp directly.
-    func encodeRumble(_ cmd: RumbleCommand) -> Data? {
-        let leftLoAmp: UInt16
-        let rightHiAmp: UInt16
-        if let hdL = cmd.leftHD, let hdR = cmd.rightHD, hdL.count >= 4, hdR.count >= 4 {
-            let ns1HF = Int(hdR[1] & 0xFE)
-            let ns1LF = max(0, Int(hdL[3]) - 64) * 2 + ((hdL[2] & 0x80) != 0 ? 1 : 0)
-            // Route NS1 LF → left LRA (low-freq physical motor, heavier feel) via SDL lo_amp.
-            // Route NS1 HF → right LRA (high-freq physical motor, lighter feel) via SDL hi_amp.
-            // Clamp before UInt16 cast: out-of-range NS1 values can exceed RUMBLE_MAX.
-            leftLoAmp  = UInt16(min(ns1LF * Self.rumbleMax / 101, Self.rumbleMax))
-            rightHiAmp = UInt16(min(ns1HF * Self.rumbleMax / 200, Self.rumbleMax))
-        } else {
-            leftLoAmp  = UInt16(Int(cmd.leftAmp)  * Self.rumbleMax / 255)
-            rightHiAmp = UInt16(Int(cmd.rightAmp) * Self.rumbleMax / 255)
-        }
-        let tid = cmd.transmitCounter & 0xF
+    // Scaling: cmd amps are UInt16 (0..65535) — SwitchPro reverses NS1 HD
+    // bytes through dekuNukem's amplitude table, other spoofs scale their
+    // native byte width up to 16-bit. Map down to RUMBLE_MAX exactly as
+    // SDL's UpdateRumble does (rumble_lo_amp * RUMBLE_MAX / UINT16_MAX).
+    // Sequence counter is supplied by the coordinator and folded into the
+    // 4-bit tid nibble of each LRA state byte so successive identical
+    // commands don't get deduped by the controller.
+    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8) -> Data? {
+        let leftLoAmp  = UInt16(Int(cmd.leftAmp)  * Self.rumbleMax / 0xFFFF)
+        let rightHiAmp = UInt16(Int(cmd.rightAmp) * Self.rumbleMax / 0xFFFF)
+        let tid = sequence & 0xF
 
         // Pro Output Report 0x02 (42 bytes, BLE handle 0x0012):
         // [0x00]=0x00 (BT report ID); [0x01..0x06]=left LRA; [0x11..0x16]=right LRA.

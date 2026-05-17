@@ -35,7 +35,9 @@ struct DualSenseOutput: HIDOutputProfile, HIDOutputSession {
         guard type == .output, id?.rawValue == 0x02, data.count >= 5 else { return nil }
         let b = data.startIndex
         guard data[b + 1] & 0x01 != 0 else { return nil }
-        return RumbleCommand(leftAmp: data[b + 4], rightAmp: data[b + 3])
+        // *257 spreads 0..255 evenly across 0..65535 (since 65535 = 255 * 257).
+        return RumbleCommand(leftAmp: UInt16(data[b + 4]) * 257,
+                             rightAmp: UInt16(data[b + 3]) * 257)
     }
 
     static let descriptorBytes: Data = Data([

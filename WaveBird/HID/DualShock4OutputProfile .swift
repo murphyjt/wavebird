@@ -37,7 +37,9 @@ struct DualShock4Output: HIDOutputProfile, HIDOutputSession {
         guard type == .output, id?.rawValue == 0x05, data.count >= 6 else { return nil }
         let b = data.startIndex
         guard data[b + 1] & 0x01 != 0 else { return nil }
-        return RumbleCommand(leftAmp: data[b + 5], rightAmp: data[b + 4])
+        // *257 spreads 0..255 evenly across 0..65535 (since 65535 = 255 * 257).
+        return RumbleCommand(leftAmp: UInt16(data[b + 5]) * 257,
+                             rightAmp: UInt16(data[b + 4]) * 257)
     }
 
     static let descriptorBytes: Data = Data([
