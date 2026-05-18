@@ -23,6 +23,14 @@ struct ContentView: View {
                 }
             }
         }
+        .sheet(isPresented: Binding(
+            get: { coordinator.pairingPrompt != nil },
+            set: { if !$0 { coordinator.declinePairing() } }
+        )) {
+            if let prompt = coordinator.pairingPrompt {
+                PairingSheet(coordinator: coordinator, prompt: prompt)
+            }
+        }
     }
 
     private var header: some View {
@@ -173,6 +181,24 @@ private struct ControllerDetailSheet: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize()
+            }
+
+            // Pairing status — only shown when we've recorded a local pairing
+            // for this controller's serial. Forgetting is local-only; the
+            // controller's stored LTK persists until it pairs with something else.
+            if let serial = record.serial, coordinator.isPaired(serial: serial) {
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .foregroundStyle(.secondary)
+                    Text("Paired with this Mac")
+                        .font(.callout)
+                    Spacer()
+                    Button("Forget") {
+                        coordinator.forgetPairing(serial: serial)
+                    }
+                    .controlSize(.small)
+                    .help("Removes WaveBird's record of this pairing so you'll be asked again on the next connect. The controller keeps its stored key until you pair it with something else.")
+                }
             }
 
             // Live rumble meter

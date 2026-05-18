@@ -51,9 +51,22 @@ final class BridgeCoordinator {
     private(set) var devices: [DeviceID: DeviceRecord] = [:]
     private(set) var isScanning = false
     private(set) var lastReportSnapshot: ReportSnapshot?
+    var pairingPrompt: PairingPrompt?
 
     private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
+    private static let pairedSerialsKey = "WaveBird.pairedSerials"
     private let defaultOutputModeID: String
+
+    // NS2 serial numbers we've previously paired with on this host. Read from
+    // UserDefaults at init; updated only after a successful pairing run.
+    @ObservationIgnored
+    private var pairedSerials: Set<String>
+
+    // Per-session "user said not now" set, keyed by serial. Prevents re-prompting
+    // on reconnect within the same launch. Cleared at process exit so the user
+    // gets another chance next time they open WaveBird.
+    @ObservationIgnored
+    private var declinedPairingThisSession: Set<String> = []
 
     @ObservationIgnored
     private var consumerTask: Task<Void, Never>?
@@ -116,6 +129,77 @@ final class BridgeCoordinator {
         self.catalog = catalog
         let stored = UserDefaults.standard.string(forKey: Self.outputModeDefaultsKey)
         self.defaultOutputModeID = stored.flatMap { catalog.entry(id: $0)?.id } ?? HIDOutputCatalog.nativeID
+        let storedSerials = UserDefaults.standard.stringArray(forKey: Self.pairedSerialsKey) ?? []
+        self.pairedSerials = Set(storedSerials)
+    }
+
+    // LTK pairing entrypoints. The prompt is published from .ready when the
+    // controller is BLE-connected, has reported a serial, and we haven't
+    // already paired (this session or persistently) with that serial. The
+    // host BT address comes from IOBluetooth and gates the whole feature —
+    // if we can't read it, we silently skip the prompt.
+    private func maybePromptForPairing(record: DeviceRecord) {
+        guard pairingPrompt == nil,
+              record.id.transport == .ble,
+              let serial = record.serial,
+              !pairedSerials.contains(serial),
+              !declinedPairingThisSession.contains(serial),
+              let host = HostAdapter.address()
+        else { return }
+        pairingPrompt = PairingPrompt(
+            deviceID: record.id,
+            controllerName: record.profile.name,
+            serial: serial,
+            hostAddress: host,
+            status: .idle
+        )
+    }
+
+    func acceptPairing() async {
+        guard let prompt = pairingPrompt else { return }
+        guard let transport = transport(for: prompt.deviceID.transport) else {
+            pairingPrompt?.status = .failed("transport unavailable")
+            return
+        }
+        pairingPrompt?.status = .inProgress
+        do {
+            _ = try await NS2Pairing.run(
+                deviceID: prompt.deviceID,
+                transport: transport,
+                hostAddress: prompt.hostAddress
+            )
+            pairedSerials.insert(prompt.serial)
+            UserDefaults.standard.set(Array(pairedSerials), forKey: Self.pairedSerialsKey)
+            pairingPrompt = nil
+        } catch {
+            pairingPrompt?.status = .failed(String(describing: error))
+        }
+    }
+
+    func declinePairing() {
+        if let serial = pairingPrompt?.serial {
+            declinedPairingThisSession.insert(serial)
+        }
+        pairingPrompt = nil
+    }
+
+    // Returns whether this controller's serial is in our local "paired" set.
+    // Note this only reflects what WaveBird has recorded — the controller may
+    // still hold an LTK for this Mac on its side even after a local forget;
+    // that on-device entry only gets cleared when the controller next pairs
+    // with something else (or the user re-pairs with WaveBird).
+    func isPaired(serial: String) -> Bool {
+        pairedSerials.contains(serial)
+    }
+
+    // Forget a serial locally. Re-shows the pairing prompt on the controller's
+    // next .ready. Does not currently send 0x03/0x08 ("Clear pairing info") to
+    // the controller — that would wipe the on-device LTK entirely. Add the
+    // device-side clear later if the local-only forget proves confusing.
+    func forgetPairing(serial: String) {
+        guard pairedSerials.remove(serial) != nil else { return }
+        UserDefaults.standard.set(Array(pairedSerials), forKey: Self.pairedSerialsKey)
+        declinedPairingThisSession.remove(serial)
     }
 
     // Persist the new default for future devices, update this device's desired
@@ -360,6 +444,10 @@ final class BridgeCoordinator {
             } else {
                 devices[id]?.connectionState = .failed("Failed to create virtual HID device")
             }
+            // All .commandResponse events for this device's init have been
+            // processed by now (they're yielded before .ready on the same
+            // stream), so record.serial is populated if the flash read succeeded.
+            if let updated = devices[id] { maybePromptForPairing(record: updated) }
         case .commandResponse(let id, let request, let response):
             FileHandle.standardError.write(Data("[ble] cmd:           \(hex(request))\n".utf8))
             if let response {
