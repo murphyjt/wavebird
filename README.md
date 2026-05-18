@@ -30,11 +30,11 @@ per-device drop-down in the app to switch:
 
 | Profile | Rumble | Motion | Notes |
 |---|---|---|---|
-| **Native (Switch 2)** | [ ] | [ ] | Work in progress |
-| **Switch Pro Controller** | [x] | [x] | Recommended |
-| **DualShock 4** | [ ] | [ ] | Work in progress |
-| **DualSense** | [ ] | [ ] | Work in progress |
-| **Xbox Wireless Controller** | [x] | [ ] | Recommended; missing Home button |
+| **Native (Switch 2)** | ❌ | ❌ | Work in progress |
+| **Switch Pro Controller** | ✅ | ✅ | Recommended |
+| **DualShock 4** | ❌ | ❌ | Work in progress |
+| **DualSense** | ❌ | ❌ | Work in progress |
+| **Xbox Wireless Controller** | ✅ | — | Recommended; missing Home button |
 
 The selection persists per-device across reconnects.
 
