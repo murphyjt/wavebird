@@ -11,6 +11,15 @@ actor BLETransport: Transport {
     nonisolated let events: AsyncStream<TransportEvent>
     nonisolated let continuation: AsyncStream<TransportEvent>.Continuation
 
+    // Run the actor on the same dispatch queue as the CB delegate so that calls
+    // into CBPeripheral / CBCentralManager (writeValue, canSendWriteWithoutResponse,
+    // …) all execute from the manager's queue without sync hops to main. Before this,
+    // CB had to marshal every off-queue access back to its main-queue delegate, which
+    // contended with input notifications (also on main) and starved the @MainActor
+    // consumer of run loop time — visible as input lag and Hz spikes.
+    nonisolated let unownedExecutor: UnownedSerialExecutor
+    private let executor: BLESerialExecutor
+
     private let queue: DispatchQueue
     private let central: CBCentralManager
     private let delegate: BLEDelegate
@@ -37,12 +46,15 @@ actor BLETransport: Transport {
         // never drops events; if the main actor blocks long enough to overflow,
         // dropping the oldest is the right tradeoff for a real-time bridge.
         let (stream, cont) = AsyncStream.makeStream(of: TransportEvent.self, bufferingPolicy: .bufferingNewest(64))
-        let q = DispatchQueue.main
+        let q = DispatchQueue(label: "WaveBird.BLE", qos: .userInteractive)
+        let exec = BLESerialExecutor(queue: q)
         let d = BLEDelegate()
         let c = CBCentralManager(delegate: d, queue: q)
         self.events = stream
         self.continuation = cont
         self.queue = q
+        self.executor = exec
+        self.unownedExecutor = exec.asUnownedSerialExecutor()
         self.delegate = d
         self.central = c
         d.transport = self
@@ -368,5 +380,26 @@ private final class BLEDelegate: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         Task { [weak transport] in await transport?.handlePeripheralReady(peripheral: peripheral) }
+    }
+}
+
+// Serial executor that runs the BLE actor's work on the CBCentralManager's
+// delegate queue. Apple's CoreBluetooth requires CB property/method access from
+// the manager's queue; before this, off-queue calls forced internal sync hops
+// to main, contending with the @MainActor consumer.
+private final class BLESerialExecutor: SerialExecutor, @unchecked Sendable {
+    private let queue: DispatchQueue
+    init(queue: DispatchQueue) { self.queue = queue }
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let unowned = UnownedJob(job)
+        let exec = asUnownedSerialExecutor()
+        queue.async {
+            unowned.runSynchronously(on: exec)
+        }
+    }
+
+    func asUnownedSerialExecutor() -> UnownedSerialExecutor {
+        UnownedSerialExecutor(ordinary: self)
     }
 }
