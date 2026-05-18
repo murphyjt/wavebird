@@ -16,33 +16,32 @@ HID gamepad through CoreHID.
 
 Early. Currently supports:
 
-- **Nintendo Switch 2 GameCube Controller (NSO/NS2)** over Bluetooth LE —
-  analog sticks (factory-calibrated), ZL/Z/L/R triggers (zero-calibrated),
-  all face/shoulder buttons, D-pad
+- **Nintendo Switch 2 GameCube Controller (NSO)** over Bluetooth LE —
+  analog sticks, all face/shoulder buttons, D-pad, Rumble and Motion
 - **Nintendo Switch 2 Pro Controller** over Bluetooth LE — analog sticks,
-  all buttons including Home and Capture
+  all buttons including Home and Capture, Rumble and Motion
 
-Not yet supported: Joy-Con (L/R), USB connections.
+Not yet supported: Joy-Con 2, Charging Grip and USB connections.
 
 ## Output profiles
 
 Each connected controller can present as a different virtual gamepad. Use the
 per-device drop-down in the app to switch:
 
-| Profile | Notes |
-|---|---|
-| **Native (Switch 2)** | Work in progress; not yet recommended for use |
-| **Switch Pro Controller** | Recommended for use; not yet motion or rumble capable |
-| **DualShock 4** | Work in progress |
-| **DualSense** | Work in progress |
-| **Xbox Wireless Controller** | Almost perfect but Home button isn't recognized |
+| Profile | Rumble | Motion | Notes |
+|---|---|---|---|
+| **Native (Switch 2)** | [ ] | [ ] | Work in progress |
+| **Switch Pro Controller** | [x] | [x] | Recommended |
+| **DualShock 4** | [ ] | [ ] | Work in progress |
+| **DualSense** | [ ] | [ ] | Work in progress |
+| **Xbox Wireless Controller** | [x] | [ ] | Recommended; missing Home button |
 
 The selection persists per-device across reconnects.
 
-Spoofed profiles (Switch Pro, DualShock 4, DualSense, Xbox) appear in
+Select output profiles (Switch Pro, DualShock 4, DualSense, Xbox) appear in
 *System Settings → Game Controllers*, where they can be remapped and customized.
 The Native profile does not — virtual HID devices with custom VID/PID don't
-surface there. This is a macOS limitation, not a bug.
+surface there. This is a macOS limitation.
 
 ## Requirements
 
@@ -82,8 +81,8 @@ unchecked, check it and relaunch.
 2. Hold the SYNC button on your controller until the LEDs flash.
 3. WaveBird discovers and connects; the controller appears in the device list
    with a live Hz readout once reports are flowing.
-4. Use the drop-down next to the device to choose which virtual gamepad it
-   presents as (Switch Pro, DualSense, Xbox, etc.).
+4. Click the controller card to make changes to controller settings
+5. Use the drop-down to choose which virtual gamepad it presents as (Switch Pro, DualSense, Xbox, etc.).
 
 The virtual gamepad is visible to apps that use the Game Controller framework
 or the WebHID / Gamepad APIs (Chrome / Safari gamepad testers like
