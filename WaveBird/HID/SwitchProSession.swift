@@ -72,6 +72,10 @@ actor SwitchProSession: HIDOutputSession {
             return
         }
 
+        // 0x10 = pure rumble (handled by parseRumble); 0x11/0x12 = NFC/IR output,
+        // both declared in the descriptor but require no reply from us.
+        if rid == 0x10 || rid == 0x11 || rid == 0x12 { return }
+
         guard rid == 0x01, data.count >= 11 else {
             let hex = data.map { String(format: "%02X", $0) }.joined(separator: " ")
             log("OUT id=0x\(String(format: "%02X", rid)) len=\(data.count) [\(hex)] (ignored)")
@@ -129,7 +133,7 @@ actor SwitchProSession: HIDOutputSession {
     // output codes differ. Source: dekuNukem/Nintendo_Switch_Reverse_Engineering
     // rumble_data_table.md, transcribed from libsdl-org/SDL
     // src/joystick/hidapi/SDL_hidapi_switch.c. See README Credits.
-    private static let ns1AmpThresholds: [UInt16] = [
+    static let ns1AmpThresholds: [UInt16] = [
             0,   514,   775,   921,  1096,  1303,  1550,  1843,  2192,  2606,
          3100,  3686,  4383,  5213,  6199,  7372,  7698,  8039,  8395,  8767,
          9155,  9560,  9984, 10426, 10887, 11369, 11873, 12398, 12947, 13520,
@@ -205,7 +209,7 @@ actor SwitchProSession: HIDOutputSession {
             payload[2] = args[args.startIndex + 2]
             payload[3] = args[args.startIndex + 3]
             payload[4] = args[args.startIndex + 4]
-            let flash = spiFlash(address: addr, length: len)
+            let flash = Self.spiFlash(address: addr, length: len)
             let copyLen = min(len, flash.count, payload.count - 5)
             for i in 0..<copyLen {
                 payload[5 + i] = flash[flash.startIndex + i]
@@ -319,10 +323,13 @@ actor SwitchProSession: HIDOutputSession {
     //   0x6098..0x60A9 (18B): factory IMU offset
     //   0x8010..0x8025 (22B): user stick calibration (0xFF = unset)
     //   0x8026..0x8039 (20B): user IMU calibration (0xFF = unset)
-    private func spiFlash(address: UInt32, length: Int) -> Data {
+    nonisolated static func spiFlash(address: UInt32, length: Int) -> Data {
         var out = Data(repeating: 0xFF, count: length)
 
         switch address {
+        case 0x6000:
+            // TODO: Log?
+            break
         case 0x6020:
             // Factory IMU calibration — accel offsets + gains, gyro offsets + gains.
             let cal: [UInt8] = [
@@ -433,7 +440,9 @@ actor SwitchProSession: HIDOutputSession {
     //   6..8:   left stick (packed 12-bit X+Y)
     //   9..11:  right stick (packed 12-bit X+Y)
     //   12:     vibration code
-    //   13..48: IMU data (3 samples × 12 bytes — zeroed; IMU not exposed)
+    //   13..48: IMU data (3 samples × 12 bytes; each sample is Int16 LE
+    //           accelX/Y/Z, gyroX/Y/Z). NS2 BLE delivers one IMU sample per
+    //           report 0x05 — we duplicate it into all three NS1 slots.
     func buildFullReport(_ state: ControllerState) -> Data {
         let s = state.buttons
         let sh = state.shoulders
@@ -476,6 +485,27 @@ actor SwitchProSession: HIDOutputSession {
         let (r0, r1, r2) = packStick12(x: state.rightStick.x, y: -Int(state.rightStick.y))
         bytes[6]  = l0; bytes[7]  = l1; bytes[8]  = l2
         bytes[9]  = r0; bytes[10] = r1; bytes[11] = r2
+
+        if let imu = state.imu {
+            let sample: [UInt8] = [
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.accelX)),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.accelX) >> 8),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.accelY)),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.accelY) >> 8),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.accelZ)),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.accelZ) >> 8),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.gyroX)),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.gyroX) >> 8),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.gyroY)),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.gyroY) >> 8),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.gyroZ)),
+                UInt8(truncatingIfNeeded: UInt16(bitPattern: imu.gyroZ) >> 8),
+            ]
+            for slot in 0..<3 {
+                let off = 13 + slot * 12
+                for i in 0..<12 { bytes[off + i] = sample[i] }
+            }
+        }
         return Data(bytes)
     }
     // MARK: - Encoding helpers

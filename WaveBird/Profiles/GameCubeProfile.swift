@@ -115,7 +115,7 @@ struct GameCubeProfile: ControllerProfile {
     // amplitude on either side turns it on. The tid nibble must vary across
     // successive sends or the controller dedupes them; the coordinator
     // supplies the sequence counter for that.
-    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8) -> Data? {
+    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8, settings: RumbleSettings.Snapshot) -> Data? {
         var packet = Data(count: 42)
         packet[0] = 0x00
         packet[1] = 0x50 | (sequence & 0xF)

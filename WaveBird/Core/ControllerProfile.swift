@@ -16,9 +16,17 @@ protocol ControllerProfile: Sendable {
 
     // Encode a normalized RumbleCommand into a BLE vibration payload for this
     // controller. `sequence` is a coordinator-managed counter the encoder folds
-    // into protocol-specific dedupe fields (NS2 LRA tid nibble). Returns nil
-    // if the controller has no motor or does not support rumble.
-    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8) -> Data?
+    // into protocol-specific dedupe fields (NS2 LRA tid nibble). `settings` is
+    // the device's RumbleSettings snapshot — profiles that don't expose tunable
+    // rumble (e.g. GameCube's on/off) ignore it. Returns nil if the controller
+    // has no motor or does not support rumble.
+    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8, settings: RumbleSettings.Snapshot) -> Data?
+
+    // Minimum re-send cadence the controller wants for a sustained rumble
+    // command. The coordinator runs the refresh task at the MIN of this and the
+    // active HIDOutputSession's refreshInterval — whichever is more frequent
+    // wins. nil = no controller-side requirement (use the session's value).
+    var rumbleRefreshInterval: Duration? { get }
 
     // Vendor passthrough descriptor: declares a single vendor input report
     // (usage page 0xFF00, report ID 0x05, 63 bytes) for ns2Passthrough mode.
@@ -32,7 +40,9 @@ protocol ControllerProfile: Sendable {
 }
 
 extension ControllerProfile {
-    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8) -> Data? { nil }
+    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8, settings: RumbleSettings.Snapshot) -> Data? { nil }
+
+    var rumbleRefreshInterval: Duration? { nil }
 
     func handleCommandResponse(request: Data, response: Data) -> ControllerMetadata? {
         NS2Responses.parseStandard(request: request, response: response)
@@ -62,6 +72,12 @@ struct ControllerMetadata: Sendable {
 struct RumbleCommand: Sendable, Hashable {
     var leftAmp: UInt16 = 0
     var rightAmp: UInt16 = 0
+    // Per-side carrier overrides used by test patterns to play melodic
+    // sequences (e.g. the GameCube boot chime). nil = use whatever the user's
+    // RumbleSettings has dialed in. The encoder applies the override to BOTH
+    // HF and LF bands of that side so the perceived pitch shifts cleanly.
+    var leftFreqOverride: UInt16? = nil
+    var rightFreqOverride: UInt16? = nil
 
     var isStop: Bool { leftAmp == 0 && rightAmp == 0 }
 }

@@ -44,69 +44,98 @@ struct ProControllerProfile: ControllerProfile {
     var hidDescriptor: Data { VirtualHIDDevice.standardGamepadDescriptor }
     var vendorPassthroughDescriptor: Data { VirtualHIDDevice.ns2VendorDescriptor(reportID: 0x05, byteCount: 63) }
 
+    // Per darthcloud's BR issue #1249: the Switch 2 console sends an output report
+    // after every input report (~67 Hz on our link). Pro 2 rumble decays / glitches
+    // when the source falls below that cadence, so heartbeat every 15 ms regardless
+    // of how often the host writes Set Reports.
+    var rumbleRefreshInterval: Duration? { .milliseconds(15) }
+
     // NS2 Pro Output Report 0x02 (42 bytes, BLE handle 0x0012):
     //   byte[0]      = 0x00 (Report ID for BT)
-    //   bytes[1..16] = Left  LRA sw2_lra_ops_t
-    //   bytes[17..32]= Right LRA sw2_lra_ops_t
+    //   bytes[1..16] = Left  LRA: state byte + 1 op (5 bytes) + padding
+    //   bytes[17..32]= Right LRA: state byte + 1 op (5 bytes) + padding
     //   bytes[33..41]= reserved
     //
-    // sw2_lra_op_t.val (uint32 LE) bits: [8:0]=lf_freq, [9]=lf_en_tone,
-    //   [19:10]=lf_amp (10-bit), [28:20]=hf_freq (9-bit), [29-30]=unused, [31]=enable
-    // Frequencies from BlueRetro hidp/sw2.h:
-    //   L_HF=0xe1, L_LF=0x100; R_HF=0x1e1, R_LF=0x180
-    // Idle val: 0x1e100000 (enable=0, no amplitude)
-    // State byte: enable[6] | ops_cnt[5:4] | tid[3:0]
+    // State byte: enable[6] | ops_cnt[5:4] | tid[3:0]. tid is supplied by the coordinator
+    // so successive identical commands aren't deduped.
     //
-    // SDL NS1 HD Rumble encoding (SDL_hidapi_switch.c EncodeRumble):
-    //   byte[1] = hf_amp (bits[7:1]) | hf_freq_msb (bit[0]); hf_amp range 0..200 (0xC8)
-    //   byte[2] = lf_freq | (lf_amp_packed >> 8 & 0x80)
-    //   byte[3] = lf_amp_packed & 0xFF; neutral=0x40, max=0x72 → effective 0..50
-    //
-    // SDL sends same encoding to both hdLeft and hdRight (NS1 has no per-motor split).
-    // Map: NS1 hf_amp → NS2 right LRA (high-freq physical motor)
-    //      NS1 lf_amp → NS2 left  LRA (low-freq physical motor)
-    // SDL NS2 rumble constants (libsdl-org/SDL, SDL_hidapi_switch2.c, EncodeHDRumble/UpdateRumble).
-    // RUMBLE_MAX caps amplitude to a safe level. hi/lo freq are the LRA centre frequencies SDL uses.
-    private static let rumbleMax = 29000
-    private static let hiFreq: UInt16 = 0x187
-    private static let loFreq: UInt16 = 0x112
+    // Per-op layout (darthcloud's sw2_lra_op_t): 32-bit val with
+    //   lf_freq[8:0] | lf_en_tone[9] | lf_amp[19:10] | hf_freq[28:20] | hf_en_tone[29]
+    //   | tbd[30] | enable[31]
+    // + separate 8-bit hf_amp byte at byte 4. One encoder, one bit layout — the SDL vs
+    // BlueRetro choice is just a preset of starting values for the user's per-band sliders.
 
-    // SDL EncodeHDRumble bit layout (libsdl-org/SDL, SDL_hidapi_switch2.c):
-    // 40 bits: hi_freq[9:0] | hi_amp[15:6] | lo_freq[9:0] | lo_amp[15:6]
-    //
-    // Scaling: cmd amps are UInt16 (0..65535) — SwitchPro reverses NS1 HD
-    // bytes through dekuNukem's amplitude table, other spoofs scale their
-    // native byte width up to 16-bit. Map down to RUMBLE_MAX exactly as
-    // SDL's UpdateRumble does (rumble_lo_amp * RUMBLE_MAX / UINT16_MAX).
-    // Sequence counter is supplied by the coordinator and folded into the
-    // 4-bit tid nibble of each LRA state byte so successive identical
-    // commands don't get deduped by the controller.
-    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8) -> Data? {
-        let leftLoAmp  = UInt16(Int(cmd.leftAmp)  * Self.rumbleMax / 0xFFFF)
-        let rightHiAmp = UInt16(Int(cmd.rightAmp) * Self.rumbleMax / 0xFFFF)
+    func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8, settings: RumbleSettings.Snapshot) -> Data? {
         let tid = sequence & 0xF
-
-        // Pro Output Report 0x02 (42 bytes, BLE handle 0x0012):
-        // [0x00]=0x00 (BT report ID); [0x01..0x06]=left LRA; [0x11..0x16]=right LRA.
+        let ops = encodeLRAOps(cmd: cmd, settings: settings)
         var packet = Data(count: 42)
-        packet[0] = 0x00
-        packet[1]  = ((leftLoAmp  > 0 ? 0x50 : 0x10) | tid)
-        let l = encodeHDRumble(hiAmp: 0,          loAmp: leftLoAmp)
-        packet[2] = l[0]; packet[3] = l[1]; packet[4] = l[2]; packet[5] = l[3]; packet[6] = l[4]
-        packet[17] = ((rightHiAmp > 0 ? 0x50 : 0x10) | tid)
-        let r = encodeHDRumble(hiAmp: rightHiAmp, loAmp: 0)
-        packet[18] = r[0]; packet[19] = r[1]; packet[20] = r[2]; packet[21] = r[3]; packet[22] = r[4]
+        packet[0]  = 0x00
+        packet[1]  = (ops.leftActive  ? 0x50 : 0x10) | tid
+        for i in 0..<5 { packet[2 + i]  = ops.left[i] }
+        packet[17] = (ops.rightActive ? 0x50 : 0x10) | tid
+        for i in 0..<5 { packet[18 + i] = ops.right[i] }
         return packet
     }
 
-    private func encodeHDRumble(hiAmp: UInt16, loAmp: UInt16) -> [UInt8] {
-        let hiF = Self.hiFreq, loF = Self.loFreq
+    private func encodeLRAOps(
+        cmd: RumbleCommand, settings: RumbleSettings.Snapshot
+    ) -> (left: [UInt8], leftActive: Bool, right: [UInt8], rightActive: Bool) {
+        let leftAmp  = UInt16(Double(cmd.leftAmp)  * settings.intensity)
+        let rightAmp = UInt16(Double(cmd.rightAmp) * settings.intensity)
+
+        // Per-side carriers: command overrides (test patterns) win, otherwise settings
+        // supply both HF and LF freqs. clampFreq guards against override values outside
+        // the 9-bit field's safe range.
+        let leftHf  = RumbleSettings.clampFreq(cmd.leftFreqOverride  ?? settings.leftHiFreq)
+        let rightHf = RumbleSettings.clampFreq(cmd.rightFreqOverride ?? settings.rightHiFreq)
+        let leftLf  = RumbleSettings.clampFreq(cmd.leftFreqOverride  ?? settings.leftLoFreq)
+        let rightLf = RumbleSettings.clampFreq(cmd.rightFreqOverride ?? settings.rightLoFreq)
+
+        // Per-band amp = cmd_amp × user scale × field max / 0xFFFF.
+        // hf_amp byte saturates at 255; lf_amp 10-bit field saturates at 1023.
+        let leftHfAmp  = scaledByte(amp: leftAmp,  scale: settings.leftHiAmpScale)
+        let leftLfAmp  = scaledTen( amp: leftAmp,  scale: settings.leftLoAmpScale)
+        let rightHfAmp = scaledByte(amp: rightAmp, scale: settings.rightHiAmpScale)
+        let rightLfAmp = scaledTen( amp: rightAmp, scale: settings.rightLoAmpScale)
+
+        return (
+            left:        packLRAOp(hfFreq: leftHf,  hfAmp: leftHfAmp,  lfFreq: leftLf,  lfAmp: leftLfAmp,  enable: leftAmp  > 0),
+            leftActive:  leftAmp  > 0,
+            right:       packLRAOp(hfFreq: rightHf, hfAmp: rightHfAmp, lfFreq: rightLf, lfAmp: rightLfAmp, enable: rightAmp > 0),
+            rightActive: rightAmp > 0
+        )
+    }
+
+    private func scaledByte(amp: UInt16, scale: Double) -> UInt8 {
+        let v = Double(amp) * scale * 255.0 / Double(UInt16.max)
+        return UInt8(min(max(v, 0), 255))
+    }
+
+    private func scaledTen(amp: UInt16, scale: Double) -> UInt16 {
+        let v = Double(amp) * scale * 1023.0 / Double(UInt16.max)
+        return UInt16(min(max(v, 0), 1023))
+    }
+
+    // BlueRetro sw2_lra_op_t layout. 32-bit val (LE bytes 0..3) with bit-packed
+    // {lf_freq, lf_en_tone, lf_amp, hf_freq, hf_en_tone, tbd, enable} + separate 8-bit
+    // hf_amp byte at byte 4. en_tone bits and tbd left at 0 — neither has a known
+    // effect from the BR research and we don't expose them in the UI yet.
+    private func packLRAOp(
+        hfFreq: UInt16, hfAmp: UInt8,
+        lfFreq: UInt16, lfAmp: UInt16,
+        enable: Bool
+    ) -> [UInt8] {
+        let val: UInt32 =
+              (UInt32(lfFreq) & 0x1FF)             // bits  0..8  lf_freq (9b)
+            | ((UInt32(lfAmp) & 0x3FF) << 10)      // bits 10..19 lf_amp  (10b)
+            | ((UInt32(hfFreq) & 0x1FF) << 20)     // bits 20..28 hf_freq (9b)
+            | ((enable ? UInt32(1) : 0) << 31)     // bit  31     enable  (1b)
         return [
-            UInt8(hiF & 0xFF),
-            UInt8(((hiAmp >> 4) & 0xFC) | ((hiF >> 8) & 0x03)),
-            UInt8(truncatingIfNeeded: (hiAmp >> 12) | (loF << 4)),
-            UInt8((loAmp & 0xC0) | ((loF >> 4) & 0x3F)),
-            UInt8(loAmp >> 8),
+            UInt8( val        & 0xFF),
+            UInt8((val >>  8) & 0xFF),
+            UInt8((val >> 16) & 0xFF),
+            UInt8((val >> 24) & 0xFF),
+            hfAmp,
         ]
     }
 
@@ -213,9 +242,51 @@ struct ProControllerProfile: ControllerProfile {
             triggerL: 0,
             triggerR: 0,
             buttons: buttons,
-            imu: nil,
+            imu: parseIMU(data, base: base),
             timestamp: .now,
             shoulders: shoulders
         )
+    }
+
+    // Motion data: 18 bytes at offset 0x2A — 4B timestamp, 2B temperature,
+    // then six Int16 LE (accelX, accelY, accelZ, gyroX, gyroY, gyroZ).
+    //
+    // Linear-axis swap (accel + gyro X/Y) follows the -90° about Z geometry
+    // derived from SDL's switch.c and switch2.c remaps:
+    //   NS1.X = +NS2.Y    NS1.Y = -NS2.X    NS1.Z = +NS2.Z
+    // Gyro Z (yaw) is additionally negated — empirically Apple's NS1 Pro
+    // driver inverts yaw relative to SDL's convention, so we pre-flip the
+    // wire byte so it lands right at the host.
+    //
+    // Accel scale matches NS1 (~4096 LSB/g); gyro scale is within ~15% of
+    // NS1's ~40 rad/s full range so we pass through unscaled. Returns nil
+    // when the slot is all zeros — IMU disabled or feature bit not yet
+    // enabled.
+    private static func parseIMU(_ data: Data, base: Data.Index) -> IMUSample? {
+        let i = base + 0x2A + 6
+        guard data.endIndex - i >= 12 else { return nil }
+        let ax = readInt16LE(data, at: i)
+        let ay = readInt16LE(data, at: i + 2)
+        let az = readInt16LE(data, at: i + 4)
+        let gx = readInt16LE(data, at: i + 6)
+        let gy = readInt16LE(data, at: i + 8)
+        let gz = readInt16LE(data, at: i + 10)
+        if ax == 0 && ay == 0 && az == 0 && gx == 0 && gy == 0 && gz == 0 { return nil }
+        return IMUSample(
+            accelX: ay,
+            accelY: negSat(ax),
+            accelZ: az,
+            gyroX:  gy,
+            gyroY:  negSat(gx),
+            gyroZ:  negSat(gz)
+        )
+    }
+
+    private static func readInt16LE(_ data: Data, at i: Data.Index) -> Int16 {
+        Int16(bitPattern: UInt16(data[i]) | (UInt16(data[i + 1]) << 8))
+    }
+
+    private static func negSat(_ v: Int16) -> Int16 {
+        v == .min ? .max : -v
     }
 }

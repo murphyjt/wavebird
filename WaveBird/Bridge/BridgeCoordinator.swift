@@ -34,6 +34,11 @@ struct DeviceRecord: Identifiable {
     // makeSession(). Stateless outputs return self; stateful spoofs (Switch
     // Pro) return an actor that owns handshake/mode state for this connection.
     var session: (any HIDOutputSession)?
+    // Most recent post-conversion rumble command handed to the NS2 profile's
+    // encodeRumble, plus the wall-clock time we observed it. Drives the
+    // SwiftUI rumble meter; not used by the transport path.
+    var latestRumble: RumbleCommand = RumbleCommand()
+    var latestRumbleAt: Date = .distantPast
 }
 
 @MainActor
@@ -71,6 +76,24 @@ final class BridgeCoordinator {
 
     @ObservationIgnored
     private var rumbleRefreshBoxes: [DeviceID: RumbleRefreshBox] = [:]
+
+    @ObservationIgnored
+    private var testRumbleTasks: [DeviceID: Task<Void, Never>] = [:]
+
+    // Per-device tunable rumble settings. The settings instance for a given product ID
+    // is created the first time a device of that type connects, then reused — UserDefaults
+    // persistence is keyed by PID so the same physical controller carries its tuning
+    // across re-pairings. The encoder reads via passed-in snapshots, so the BLE write
+    // queue never touches @MainActor state.
+    private var rumbleSettingsByPID: [UInt16: RumbleSettings] = [:]
+
+    func rumbleSettings(for record: DeviceRecord) -> RumbleSettings {
+        let pid = record.advertisement.productID
+        if let existing = rumbleSettingsByPID[pid] { return existing }
+        let made = RumbleSettings(productID: pid)
+        rumbleSettingsByPID[pid] = made
+        return made
+    }
 
     // Prevents App Nap / background throttling while a controller is active.
     // Wrapped so that deinit ends the activity regardless of isolation.
@@ -114,7 +137,8 @@ final class BridgeCoordinator {
         let session = out.makeSession()
         let rumbleBox = RumbleRefreshBox()
         rumbleRefreshBoxes[record.id] = rumbleBox
-        let onSetReport = makeSetReportHandler(id: record.id, transport: transport(for: record.id.transport), profile: record.profile, rumbleRefresh: rumbleBox, session: session)
+        let settings = rumbleSettings(for: record)
+        let onSetReport = makeSetReportHandler(id: record.id, transport: transport(for: record.id.transport), profile: record.profile, rumbleRefresh: rumbleBox, session: session, settings: settings)
         guard let vhid = VirtualHIDDevice(
             descriptor: out.descriptor,
             vendorID: out.vendorID,
@@ -138,27 +162,39 @@ final class BridgeCoordinator {
         transport: (any Transport)?,
         profile: any ControllerProfile,
         rumbleRefresh: RumbleRefreshBox,
-        session: any HIDOutputSession
+        session: any HIDOutputSession,
+        settings: RumbleSettings
     ) -> VirtualHIDDevice.SetReportHandler {
-        return { device, type, id, data in
+        return { [weak self] device, type, id, data in
             let idStr = id.map { String(format: "0x%02X", $0.rawValue) } ?? "-"
             let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
             stderrLog("[hid] setReport type=\(type) id=\(idStr) len=\(data.count) [\(hex)]")
 
             if let cmd = session.parseRumble(type: type, id: id, data: data) {
                 rumbleRefresh.cancel()
+                if let self {
+                    Task { @MainActor in
+                        self.devices[deviceID]?.latestRumble = cmd
+                        self.devices[deviceID]?.latestRumbleAt = Date()
+                    }
+                }
                 // Pump a fresh counter on every outgoing command. GC/Pro dedupe
                 // byte-identical successive payloads, so the tid nibble must vary
                 // even when amplitude doesn't — including when the host drives the
                 // cadence itself (DS4/DualSense send ~30 Hz at constant amplitude).
-                if let payload = profile.encodeRumble(cmd, sequence: rumbleRefresh.nextCounter()) {
+                if let payload = profile.encodeRumble(cmd, sequence: rumbleRefresh.nextCounter(), settings: settings.snapshot()) {
                     try? await transport?.sendVibration(payload, to: deviceID)
                 }
-                if let interval = session.refreshInterval, !cmd.isStop {
+                // Whichever side wants more frequent updates wins. Pro 2 sets
+                // a 15 ms controller-side requirement to match the Switch console;
+                // Xbox spoof sets 80 ms session-side; nil on either means defer.
+                let interval = Self.mergeRefresh(profile.rumbleRefreshInterval, session.refreshInterval)
+                if let interval, !cmd.isStop {
                     rumbleRefresh.replace(with: Task {
                         while !Task.isCancelled {
                             try? await Task.sleep(for: interval)
-                            if let payload = profile.encodeRumble(cmd, sequence: rumbleRefresh.nextCounter()) {
+                            // Re-snapshot per refresh so mid-stream slider tweaks apply.
+                            if let payload = profile.encodeRumble(cmd, sequence: rumbleRefresh.nextCounter(), settings: settings.snapshot()) {
                                 try? await transport?.sendVibration(payload, to: deviceID)
                             }
                         }
@@ -201,6 +237,7 @@ final class BridgeCoordinator {
         for task in dispatchTasks.values { task.cancel() }
         for cont in stateContinuations.values { cont.finish() }
         for box in rumbleRefreshBoxes.values { box.cancel() }
+        for task in testRumbleTasks.values { task.cancel() }
     }
 
     func start() async {
@@ -355,6 +392,8 @@ final class BridgeCoordinator {
             stateContinuations[id] = nil
             rumbleRefreshBoxes[id]?.cancel()
             rumbleRefreshBoxes[id] = nil
+            testRumbleTasks[id]?.cancel()
+            testRumbleTasks[id] = nil
             devices[id]?.connectionState = .disconnected
             devices[id]?.virtualHID = nil
             devices[id]?.session = nil
@@ -437,6 +476,128 @@ final class BridgeCoordinator {
 
     private func transport(for kind: TransportKind) -> (any Transport)? {
         transports.first { $0.kind == kind }
+    }
+
+    nonisolated private static func mergeRefresh(_ a: Duration?, _ b: Duration?) -> Duration? {
+        switch (a, b) {
+        case (nil, nil): nil
+        case (let x?, nil): x
+        case (nil, let y?): y
+        case (let x?, let y?): min(x, y)
+        }
+    }
+
+    // Fire a canned rumble sequence on every ready, rumble-capable device. Each
+    // device's prior test (if any) is cancelled; its rumble-refresh task is also
+    // cancelled so a stale host-side resend can't interleave with the pattern.
+    // Routes through the same encodeRumble + sendVibration path as host rumble,
+    // so intensity/frequency/mapping all apply to the test as well.
+    func playTestRumble(_ pattern: TestRumblePattern, on deviceID: DeviceID? = nil) {
+        let targets: [(DeviceID, DeviceRecord)]
+        if let deviceID, let record = devices[deviceID] {
+            targets = [(deviceID, record)]
+        } else {
+            targets = devices.filter { $0.value.connectionState == .ready }.map { ($0.key, $0.value) }
+        }
+        for (id, record) in targets where record.connectionState == .ready {
+            let probeSettings = rumbleSettings(for: record).snapshot()
+            guard record.profile.encodeRumble(
+                RumbleCommand(leftAmp: 1, rightAmp: 1), sequence: 0, settings: probeSettings
+            ) != nil else { continue }
+            startTestRumble(pattern, on: id, profile: record.profile, settings: rumbleSettings(for: record))
+        }
+    }
+
+    private func startTestRumble(_ pattern: TestRumblePattern, on id: DeviceID, profile: any ControllerProfile, settings: RumbleSettings) {
+        testRumbleTasks[id]?.cancel()
+        rumbleRefreshBoxes[id]?.cancel()
+        let transport = transport(for: id.transport)
+        let refresh = rumbleRefreshBoxes[id]
+        testRumbleTasks[id] = Task { [weak self] in
+            await self?.runTestRumble(pattern, on: id, profile: profile, transport: transport, refresh: refresh, settings: settings)
+        }
+    }
+
+    private func runTestRumble(
+        _ pattern: TestRumblePattern,
+        on id: DeviceID,
+        profile: any ControllerProfile,
+        transport: (any Transport)?,
+        refresh: RumbleRefreshBox?,
+        settings: RumbleSettings
+    ) async {
+        @Sendable func send(_ cmd: RumbleCommand) async {
+            await MainActor.run {
+                self.devices[id]?.latestRumble = cmd
+                self.devices[id]?.latestRumbleAt = Date()
+            }
+            if let payload = profile.encodeRumble(cmd, sequence: refresh?.nextCounter() ?? 0, settings: settings.snapshot()) {
+                try? await transport?.sendVibration(payload, to: id)
+            }
+        }
+        // Pump the command at the profile's refresh cadence for the requested duration.
+        // A single send decays on the controller (it expects an output report after every
+        // input report at ~67 Hz on BLE), so any "hold" needs to keep feeding the same
+        // payload until the next value change.
+        let heartbeat: Duration = profile.rumbleRefreshInterval ?? .milliseconds(15)
+        @Sendable func hold(_ cmd: RumbleCommand, _ ms: Int) async {
+            let deadline = ContinuousClock.now.advanced(by: .milliseconds(ms))
+            while ContinuousClock.now < deadline {
+                if Task.isCancelled { return }
+                await send(cmd)
+                try? await Task.sleep(for: heartbeat)
+            }
+        }
+        let full: UInt16 = 0xFFFF
+        let half: UInt16 = 0x8000
+
+        switch pattern {
+        case .both:
+            await hold(RumbleCommand(leftAmp: full, rightAmp: full), 800)
+        case .left:
+            await hold(RumbleCommand(leftAmp: full, rightAmp: 0), 800)
+        case .right:
+            await hold(RumbleCommand(leftAmp: 0, rightAmp: full), 800)
+        case .alternate:
+            // Gait: brief L/R pulses with silence between, like footsteps.
+            for _ in 0..<4 {
+                if Task.isCancelled { break }
+                await hold(RumbleCommand(leftAmp: half, rightAmp: 0), 120)
+                await hold(RumbleCommand(), 120)
+                if Task.isCancelled { break }
+                await hold(RumbleCommand(leftAmp: 0, rightAmp: half), 120)
+                await hold(RumbleCommand(), 120)
+            }
+        case .ramp:
+            let steps = 12
+            for i in 1...steps {
+                if Task.isCancelled { break }
+                let amp = UInt16(Double(full) * Double(i) / Double(steps))
+                await hold(RumbleCommand(leftAmp: amp, rightAmp: amp), 90)
+            }
+            await hold(RumbleCommand(leftAmp: full, rightAmp: full), 250)
+        }
+
+        await send(RumbleCommand())
+    }
+}
+
+enum TestRumblePattern: String, CaseIterable, Identifiable, Sendable {
+    case both
+    case left
+    case right
+    case alternate
+    case ramp
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .both:      return "Both"
+        case .left:      return "Left"
+        case .right:     return "Right"
+        case .alternate: return "Alternate"
+        case .ramp:      return "Ramp"
+        }
     }
 }
 

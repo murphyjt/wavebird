@@ -25,6 +25,11 @@ actor BLETransport: Transport {
     // Per device, a map of subscribed response-char UUID → its handle.
     private var responseHandles: [UUID: [CBUUID: UInt16]] = [:]
     private var pendingResponses: [UUID: (request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
+    // Single-slot coalescing queue for vibration writes that hit backpressure.
+    // CoreBluetooth silently drops writeWithoutResponse calls when the per-peripheral
+    // queue is full, so we stash the latest pending payload here and drain it from
+    // peripheralIsReady. Rumble is naturally coalescable — the freshest frame wins.
+    private var pendingVibration: [UUID: Data] = [:]
 
     init() {
         // bufferingNewest caps memory if the main-actor consumer falls behind.
@@ -114,7 +119,26 @@ actor BLETransport: Transport {
 
     func sendVibration(_ payload: Data, to id: DeviceID) async throws {
         guard let p = peripherals[id.raw], let ch = vibrationChars[id.raw] else { return }
+        // For writeWithoutResponse, CoreBluetooth's per-peripheral queue can fill.
+        // If it has space, write through; otherwise stash for drain on the
+        // peripheralIsReady callback. Newest payload replaces any older pending one.
+        if writeType(for: ch) == .withoutResponse, !p.canSendWriteWithoutResponse {
+            pendingVibration[id.raw] = payload
+            return
+        }
         p.writeValue(payload, for: ch, type: writeType(for: ch))
+    }
+
+    fileprivate func handlePeripheralReady(peripheral: CBPeripheral) {
+        guard let payload = pendingVibration.removeValue(forKey: peripheral.identifier),
+              let ch = vibrationChars[peripheral.identifier] else { return }
+        // canSendWriteWithoutResponse can flip back to false between the callback
+        // and our write. If it does, re-stash and wait for the next ready event.
+        if writeType(for: ch) == .withoutResponse, !peripheral.canSendWriteWithoutResponse {
+            pendingVibration[peripheral.identifier] = payload
+            return
+        }
+        peripheral.writeValue(payload, for: ch, type: writeType(for: ch))
     }
 
     func sendAwaitingResponse(_ payload: Data, to id: DeviceID, timeout: Duration) async throws -> CommandResponseFrame? {
@@ -209,6 +233,7 @@ actor BLETransport: Transport {
         outputChars[peripheral.identifier] = nil
         vibrationChars[peripheral.identifier] = nil
         responseHandles[peripheral.identifier] = nil
+        pendingVibration[peripheral.identifier] = nil
         if let pending = pendingResponses.removeValue(forKey: peripheral.identifier) {
             pending.cont.resume(returning: nil)
         }
@@ -339,5 +364,9 @@ private final class BLEDelegate: NSObject, CBCentralManagerDelegate, CBPeriphera
         error: Error?
     ) {
         Task { [weak transport] in await transport?.handleNotification(peripheral: peripheral, characteristic: characteristic) }
+    }
+
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        Task { [weak transport] in await transport?.handlePeripheralReady(peripheral: peripheral) }
     }
 }
