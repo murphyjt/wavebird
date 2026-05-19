@@ -59,8 +59,10 @@ struct RumbleSettingsCard: View {
                 }
                 freqRow("Left Frequency",  value: $settings.leftHiFreq)
                 freqRow("Right Frequency", value: $settings.rightHiFreq)
-                ampRow("Left Amplitude",  hi: $settings.leftHiAmpScale,  lo: $settings.leftLoAmpScale)
-                ampRow("Right Amplitude", hi: $settings.rightHiAmpScale, lo: $settings.rightLoAmpScale)
+                ampRow("Left HF Amplitude",  value: $settings.leftHiAmpScale)
+                ampRow("Left LF Amplitude",  value: $settings.leftLoAmpScale)
+                ampRow("Right HF Amplitude", value: $settings.rightHiAmpScale)
+                ampRow("Right LF Amplitude", value: $settings.rightLoAmpScale)
             }
         }
     }
@@ -110,26 +112,15 @@ struct RumbleSettingsCard: View {
     }
 
     @ViewBuilder
-    private func ampRow(_ label: String, hi: Binding<Double>, lo: Binding<Double>) -> some View {
+    private func ampRow(_ label: String, value: Binding<Double>) -> some View {
         LabeledContent(label) {
             HStack(spacing: 8) {
-                ampMiniSlider(band: "HF", value: hi)
-                ampMiniSlider(band: "LF", value: lo)
+                Slider(value: value, in: 0...1)
+                Text("\(Int(value.wrappedValue * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, alignment: .trailing)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func ampMiniSlider(band: String, value: Binding<Double>) -> some View {
-        HStack(spacing: 4) {
-            Text(band)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tertiary)
-            Slider(value: value, in: 0...1)
-            Text("\(Int(value.wrappedValue * 100))%")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 34, alignment: .trailing)
         }
     }
 }

@@ -86,7 +86,6 @@ struct ControllerDetailSheet: View {
             }
             .padding(20)
         }
-        .frame(minHeight: live?.firmware?.controllerType == 0x03 ? 352 : 560 )
         .sheet(item: $forgetConfirmation) { confirm in
             ForgetConfirmationSheet(
                 displayName: confirm.displayName,

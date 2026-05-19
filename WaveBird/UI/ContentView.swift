@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var coordinator: BridgeCoordinator
-    @State private var sheetEntryID: String?
+    @Environment(\.openWindow) private var openWindow
     @State private var showSetupSheet = false
     // Live device IDs already in .ready at the moment the setup sheet opens.
     // We auto-dismiss the sheet when a *new* device transitions to .ready, not
@@ -25,16 +25,6 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(minWidth: 480, minHeight: 380)
-        .sheet(isPresented: Binding(
-            get: { sheetEntryID != nil },
-            set: { if !$0 { sheetEntryID = nil } }
-        )) {
-            if let id = sheetEntryID {
-                ControllerDetailSheet(coordinator: coordinator, entryID: id) {
-                    sheetEntryID = nil
-                }
-            }
-        }
         .sheet(isPresented: $showSetupSheet) {
             SetupSheet { showSetupSheet = false }
         }
@@ -62,6 +52,11 @@ struct ContentView: View {
                 showSetupSheet = false
             }
         }
+    }
+
+    private func openDetail(for id: String) {
+        coordinator.pendingDetailEntryID = id
+        openWindow(id: "controller-detail")
     }
 
     // Stable-orderable snapshot for onChange diffing.
@@ -112,11 +107,11 @@ struct ContentView: View {
             ForEach(coordinator.listEntries) { entry in
                 if let record = entry.live {
                     LiveControllerRow(record: record, paired: entry.paired) {
-                        sheetEntryID = entry.id
+                        openDetail(for: entry.id)
                     }
                 } else if let paired = entry.paired {
                     OfflineControllerRow(paired: paired) {
-                        sheetEntryID = entry.id
+                        openDetail(for: entry.id)
                     }
                 }
             }

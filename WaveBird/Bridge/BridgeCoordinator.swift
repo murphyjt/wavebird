@@ -70,6 +70,12 @@ final class BridgeCoordinator {
     private(set) var isScanning = false
     private(set) var lastReportSnapshot: ReportSnapshot?
     var pairingPrompt: PairingPrompt?
+    // ListEntry.id of the controller shown in the controller-detail Window.
+    // Written by every caller that opens the window (main-window rows, menu
+    // bar item); ControllerDetailWindow reads it. Not cleared on close — the
+    // next open always overwrites first, which avoids a race where SwiftUI
+    // evaluates the window body against a stale nil.
+    var pendingDetailEntryID: String?
 
     private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
     private static let pairedControllersKey = "WaveBird.pairedControllers"
