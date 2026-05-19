@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct WaveBirdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @AppStorage("WaveBird.openInBackground") private var openInBackground = false
 
     var body: some Scene {
         Window("WaveBird", id: "main") {
@@ -11,6 +12,7 @@ struct WaveBirdApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
+        .defaultLaunchBehavior(openInBackground ? .suppressed : .automatic)
 
         Window("Controller", id: "controller-detail") {
             ControllerDetailWindow(coordinator: appDelegate.coordinator)
