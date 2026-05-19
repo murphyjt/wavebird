@@ -36,6 +36,14 @@ enum NS2Commands {
         0x40, 0x7E, 0x00, 0x00, 0xC0, 0x30, 0x01, 0x00,
     ])
 
+    // Cmd 0x02/0x04 — read 0x40 bytes from flash 0x1FA000: BT pairing block.
+    // Decodes to (item count, host_addr_1, LTK_1, host_addr_2, LTK_2).
+    // Used at .ready to detect whether *this* Mac is one of the stored hosts.
+    static let pairingInfoRead = Data([
+        0x02, 0x91, 0x01, 0x04, 0x00, 0x08, 0x00, 0x00,
+        0x40, 0x7E, 0x00, 0x00, 0x00, 0xA0, 0x1F, 0x00,
+    ])
+
     // Cmd 0x10/0x01 — get firmware version info.
     static let firmwareInfo = Data([
         0x10, 0x91, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
@@ -125,6 +133,28 @@ enum NS2Responses {
         )
     }
 
+    // Input: the 0x40-byte flash block read from 0x1FA000.
+    // Layout (per memory_layout.md §0x1FA000-0x1FAFFF):
+    //   [0x00]      item count (0..2)
+    //   [0x08..0E]  host address #1 (6 bytes, natural MSB-first)
+    //   [0x1A..2A]  LTK #1 (16 bytes; not retained — we only need address match)
+    //   [0x30..36]  host address #2 (6 bytes)
+    //   [0x42..52]  LTK #2 (16 bytes)
+    static func parsePairingInfo(_ flashBlock: Data) -> [Data] {
+        guard flashBlock.count >= 0x36 else { return [] }
+        let b = flashBlock.startIndex
+        let count = Int(flashBlock[b])
+        guard (0...2).contains(count) else { return [] }
+        var addresses: [Data] = []
+        if count >= 1 {
+            addresses.append(Data(flashBlock[(b + 0x08)..<(b + 0x0E)]))
+        }
+        if count >= 2 {
+            addresses.append(Data(flashBlock[(b + 0x30)..<(b + 0x36)]))
+        }
+        return addresses
+    }
+
     // Input: the 0x40-byte flash block read from 0x13080 (or 0x130C0).
     // The 9-byte stick calibration record lives at offset 0x28 inside the block.
     // Packing (per axis, 12-bit, little-endian nibble-packed):
@@ -171,6 +201,8 @@ enum NS2Responses {
                 return parseStickCalibration(flashData).map { ControllerMetadata(leftCalibration: $0) }
             case 0x130C0:
                 return parseStickCalibration(flashData).map { ControllerMetadata(rightCalibration: $0) }
+            case 0x1FA000:
+                return ControllerMetadata(onDeviceHostAddresses: parsePairingInfo(flashData))
             default:
                 return nil
             }

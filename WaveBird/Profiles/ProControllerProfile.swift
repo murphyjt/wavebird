@@ -26,6 +26,7 @@ struct ProControllerProfile: ControllerProfile {
                 NS2Commands.leftStickCalibrationRead,
                 NS2Commands.rightStickCalibrationRead,
                 NS2Commands.firmwareInfo,
+                NS2Commands.pairingInfoRead,
                 NS2Commands.connectionVibration,
                 NS2Commands.player1LED,
                 NS2Commands.setFeatureMask(Self.features),
@@ -66,6 +67,9 @@ struct ProControllerProfile: ControllerProfile {
     // BlueRetro choice is just a preset of starting values for the user's per-band sliders.
 
     func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8, settings: RumbleSettings.Snapshot) -> Data? {
+        // Intensity-off suppresses non-stop sends entirely (saves BLE). Stop
+        // commands still go through so any in-flight rumble can be quieted.
+        if settings.intensity == 0 && !cmd.isStop { return nil }
         let tid = sequence & 0xF
         let ops = encodeLRAOps(cmd: cmd, settings: settings)
         var packet = Data(count: 42)

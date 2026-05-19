@@ -58,6 +58,10 @@ struct ControllerMetadata: Sendable {
     var triggerZeros: TriggerZeros? = nil
     var leftCalibration: StickCalibration? = nil
     var rightCalibration: StickCalibration? = nil
+    // 0–2 host BT addresses (natural order) that this controller's pairing
+    // block at flash 0x1FA000 currently holds. nil means "we haven't read it
+    // yet" (different from "we read it and it was empty" which is []).
+    var onDeviceHostAddresses: [Data]? = nil
 }
 
 // Normalized rumble command produced by HIDOutputSession.parseRumble. The

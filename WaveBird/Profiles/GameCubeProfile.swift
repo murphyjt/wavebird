@@ -49,6 +49,7 @@ struct GameCubeProfile: ControllerProfile {
                 NS2Commands.leftStickCalibrationRead,
                 NS2Commands.rightStickCalibrationRead,
                 NS2Commands.firmwareInfo,
+                NS2Commands.pairingInfoRead,
                 NS2Commands.connectionVibration,
                 NS2Commands.player1LED,
                 NS2Commands.setFeatureMask(Self.features),
@@ -116,6 +117,9 @@ struct GameCubeProfile: ControllerProfile {
     // successive sends or the controller dedupes them; the coordinator
     // supplies the sequence counter for that.
     func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8, settings: RumbleSettings.Snapshot) -> Data? {
+        // Intensity-off suppresses non-stop sends entirely (saves BLE). Stop
+        // commands still go through so any in-flight rumble can be quieted.
+        if settings.intensity == 0 && !cmd.isStop { return nil }
         var packet = Data(count: 42)
         packet[0] = 0x00
         packet[1] = 0x50 | (sequence & 0xF)

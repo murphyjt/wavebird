@@ -11,7 +11,7 @@ struct WaveBirdApp: App {
     var body: some Scene {
         WindowGroup("WaveBird") {
             ContentView(coordinator: coordinator)
-                .frame(minWidth: 600, maxWidth: 724)
+                .frame(width: 512)
                 .task {
                     // HIDVirtualDevice requires Accessibility TCC permission (kIOHIDRequestTypePostEvent).
                     // After denial, re-enable in System Settings → Privacy → Accessibility.

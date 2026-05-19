@@ -14,3 +14,7 @@ struct DeviceID: Sendable, Hashable {
         self.raw = raw
     }
 }
+
+extension DeviceID: Identifiable {
+    var id: UUID { raw }
+}

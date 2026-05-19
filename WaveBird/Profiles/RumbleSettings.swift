@@ -91,6 +91,10 @@ final class RumbleSettings: @unchecked Sendable {
 
     let productID: UInt16
 
+    // GC has a single on/off motor (see GameCubeProfile.encodeRumble), so the
+    // preset/freq/amp tunables are inert — only `intensity` is meaningful for it.
+    var isGameCube: Bool { productID == 0x2073 }
+
     @ObservationIgnored
     private let lock: OSAllocatedUnfairLock<Snapshot>
 
@@ -141,14 +145,14 @@ final class RumbleSettings: @unchecked Sendable {
         }
     }
 
+    // Intensity is a master gain orthogonal to the preset's freq/amp tuning, so
+    // moving this slider does NOT mark the preset as .custom.
     var intensity: Double {
         get { access(keyPath: \.intensity); return lock.withLock { $0.intensity } }
         set {
             let c = min(max(newValue, 0), 1)
             withMutation(keyPath: \.intensity) {
-                withMutation(keyPath: \.preset) {
-                    lock.withLock { $0.intensity = c; $0.preset = .custom }
-                }
+                lock.withLock { $0.intensity = c }
             }
             persist()
         }

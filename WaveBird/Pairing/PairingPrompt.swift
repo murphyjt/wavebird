@@ -7,10 +7,22 @@ struct PairingPrompt: Sendable, Identifiable {
     let deviceID: DeviceID
     let controllerName: String
     let serial: String
+    let productID: UInt16
     let hostAddress: Data   // 6 bytes, natural order
+    let intent: Intent
     var status: Status
 
     var id: DeviceID { deviceID }
+
+    // Which of the four (local × on-device) pairing states the user is being
+    // shown. .pair and .repair run the full 4-step exchange (they're the same
+    // code path); .remember just adopts the existing on-device pairing into
+    // WaveBird's local list without sending anything.
+    enum Intent: Sendable, Equatable {
+        case pair      // local = no,  on-device = no
+        case repair    // local = yes, on-device = no  (controller forgot us)
+        case remember  // local = no,  on-device = yes (we forgot the controller)
+    }
 
     enum Status: Sendable, Equatable {
         case idle

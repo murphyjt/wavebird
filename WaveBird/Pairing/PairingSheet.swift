@@ -15,11 +15,11 @@ struct PairingSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Image(systemName: "link.badge.plus")
+                Image(systemName: iconName)
                     .font(.title)
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Pair \(prompt.controllerName)?")
+                    Text("\(titlePrefix) \(prompt.controllerName)?")
                         .font(.headline)
                     Text("SN \(prompt.serial)")
                         .font(.caption)
@@ -28,15 +28,17 @@ struct PairingSheet: View {
                 }
             }
 
-            Text("Pairing lets WaveBird remember this controller, so you can reconnect by pressing any button instead of holding SYNC.")
+            Text(bodyCopy)
                 .font(.callout)
 
-            GroupBox {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
-                    Text("Pairing will overwrite the controller's pairing with a Nintendo Switch 2 console. To use it on the console again, you'll need to re-pair it there (hold SYNC).")
-                        .font(.caption)
+            if showsOverwriteWarning {
+                GroupBox {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                        Text("Pairing will overwrite the controller's pairing with a Nintendo Switch 2 console. To use it on the console again, you'll need to re-pair it there (hold SYNC).")
+                            .font(.caption)
+                    }
                 }
             }
 
@@ -60,7 +62,7 @@ struct PairingSheet: View {
                     if prompt.status == .inProgress {
                         ProgressView().controlSize(.small)
                     } else {
-                        Text("Pair")
+                        Text(acceptLabel)
                     }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -69,5 +71,46 @@ struct PairingSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    private var iconName: String {
+        switch prompt.intent {
+        case .pair, .repair: "link.badge.plus"
+        case .remember:      "questionmark.folder"
+        }
+    }
+
+    private var titlePrefix: String {
+        switch prompt.intent {
+        case .pair:     "Pair"
+        case .repair:   "Re-pair"
+        case .remember: "Remember"
+        }
+    }
+
+    private var acceptLabel: String {
+        switch prompt.intent {
+        case .pair:     "Pair"
+        case .repair:   "Re-pair"
+        case .remember: "Remember"
+        }
+    }
+
+    private var bodyCopy: String {
+        switch prompt.intent {
+        case .pair:
+            "Pairing lets WaveBird remember this controller, so you can reconnect by pressing any button instead of holding SYNC."
+        case .repair:
+            "WaveBird remembers this controller, but the controller no longer recognizes this Mac — probably because it was paired with another device. Re-pair to restore auto-reconnect."
+        case .remember:
+            "This controller is already paired to this Mac at the hardware level, but WaveBird doesn't have a record of it. Add it to WaveBird's list? No re-pairing is needed."
+        }
+    }
+
+    private var showsOverwriteWarning: Bool {
+        switch prompt.intent {
+        case .pair, .repair: true
+        case .remember:      false
+        }
     }
 }

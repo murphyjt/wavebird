@@ -25,6 +25,8 @@ struct DeviceRecord: Identifiable {
     var serial: String? = nil
     var firmware: FirmwareInfo? = nil
     var calibration = ControllerCalibration()
+    // Populated from the 0x1FA000 flash read during init. nil = not yet read.
+    var onDeviceHostAddresses: [Data]? = nil
     var outputModeID: String
     // Mode captured at the moment the virtual HID device was created. We
     // intentionally keep using this instead of the record's live outputModeID
@@ -34,11 +36,27 @@ struct DeviceRecord: Identifiable {
     // makeSession(). Stateless outputs return self; stateful spoofs (Switch
     // Pro) return an actor that owns handshake/mode state for this connection.
     var session: (any HIDOutputSession)?
-    // Most recent post-conversion rumble command handed to the NS2 profile's
-    // encodeRumble, plus the wall-clock time we observed it. Drives the
-    // SwiftUI rumble meter; not used by the transport path.
-    var latestRumble: RumbleCommand = RumbleCommand()
-    var latestRumbleAt: Date = .distantPast
+}
+
+// One row in the controllers list. Either a currently-advertising/connected
+// device (live), a previously-paired controller that isn't currently nearby
+// (offline), or both at once (a live device whose serial we recognize from
+// past pairings — still rendered as a live row, with a Paired badge).
+struct ListEntry: Identifiable, Sendable {
+    let id: String
+    let live: DeviceRecord?
+    let paired: PairedController?
+
+    var displayName: String {
+        paired?.displayName ?? live?.profile.name ?? "Unknown controller"
+    }
+
+    var serial: String? {
+        live?.serial ?? paired?.serial
+    }
+
+    var isLive: Bool { live != nil }
+    var isPaired: Bool { paired != nil }
 }
 
 @MainActor
@@ -54,13 +72,14 @@ final class BridgeCoordinator {
     var pairingPrompt: PairingPrompt?
 
     private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
-    private static let pairedSerialsKey = "WaveBird.pairedSerials"
-    private let defaultOutputModeID: String
+    private static let pairedControllersKey = "WaveBird.pairedControllers"
+    private static let legacyPairedSerialsKey = "WaveBird.pairedSerials"
+    let defaultOutputModeID: String
 
-    // NS2 serial numbers we've previously paired with on this host. Read from
-    // UserDefaults at init; updated only after a successful pairing run.
-    @ObservationIgnored
-    private var pairedSerials: Set<String>
+    // Controllers we've previously paired with on this host. Persisted as
+    // JSON in UserDefaults under pairedControllersKey. Mutating callers must
+    // route through persistPairedControllers() so disk + memory stay in sync.
+    private(set) var pairedControllers: [String: PairedController]
 
     // Per-session "user said not now" set, keyed by serial. Prevents re-prompting
     // on reconnect within the same launch. Cleared at process exit so the user
@@ -101,7 +120,10 @@ final class BridgeCoordinator {
     private var rumbleSettingsByPID: [UInt16: RumbleSettings] = [:]
 
     func rumbleSettings(for record: DeviceRecord) -> RumbleSettings {
-        let pid = record.advertisement.productID
+        rumbleSettings(forProductID: record.advertisement.productID)
+    }
+
+    func rumbleSettings(forProductID pid: UInt16) -> RumbleSettings {
         if let existing = rumbleSettingsByPID[pid] { return existing }
         let made = RumbleSettings(productID: pid)
         rumbleSettingsByPID[pid] = made
@@ -129,34 +151,95 @@ final class BridgeCoordinator {
         self.catalog = catalog
         let stored = UserDefaults.standard.string(forKey: Self.outputModeDefaultsKey)
         self.defaultOutputModeID = stored.flatMap { catalog.entry(id: $0)?.id } ?? HIDOutputCatalog.nativeID
-        let storedSerials = UserDefaults.standard.stringArray(forKey: Self.pairedSerialsKey) ?? []
-        self.pairedSerials = Set(storedSerials)
+        self.pairedControllers = Self.loadPairedControllers()
     }
 
-    // LTK pairing entrypoints. The prompt is published from .ready when the
-    // controller is BLE-connected, has reported a serial, and we haven't
-    // already paired (this session or persistently) with that serial. The
-    // host BT address comes from IOBluetooth and gates the whole feature —
-    // if we can't read it, we silently skip the prompt.
+    // First read pairedControllersKey (the new JSON shape). If that's absent,
+    // migrate from the prior pairedSerialsKey ([String]) by synthesizing minimal
+    // entries and persisting the new shape. The legacy key is removed once
+    // migration completes so we don't re-do it on every launch.
+    private static func loadPairedControllers() -> [String: PairedController] {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: pairedControllersKey),
+           let decoded = try? JSONDecoder().decode([String: PairedController].self, from: data) {
+            return decoded
+        }
+        let legacy = defaults.stringArray(forKey: legacyPairedSerialsKey) ?? []
+        guard !legacy.isEmpty else { return [:] }
+        var migrated: [String: PairedController] = [:]
+        for serial in legacy {
+            migrated[serial] = PairedController(
+                serial: serial,
+                productID: 0,
+                displayName: "Paired controller",
+                lastSeenAt: .distantPast
+            )
+        }
+        if let encoded = try? JSONEncoder().encode(migrated) {
+            defaults.set(encoded, forKey: pairedControllersKey)
+        }
+        defaults.removeObject(forKey: legacyPairedSerialsKey)
+        return migrated
+    }
+
+    private func persistPairedControllers() {
+        guard let encoded = try? JSONEncoder().encode(pairedControllers) else { return }
+        UserDefaults.standard.set(encoded, forKey: Self.pairedControllersKey)
+    }
+
+    // LTK pairing entrypoints. We always need the host BT address (the value
+    // the controller compares to its flash entries when deciding whether to
+    // auto-reconnect), so if IOBluetooth can't give it to us we silently skip.
+    //
+    // Four (local × on-device) states determine the prompt:
+    //   yes/yes → already paired, no prompt
+    //   yes/no  → intent .repair (something else overwrote our slot)
+    //   no/yes  → intent .remember (we forgot but the controller didn't)
+    //   no/no   → intent .pair (fresh exchange)
+    // When the flash read failed (onDeviceHostAddresses still nil at .ready),
+    // we fall back to local-only logic — same behavior as before this branch.
     private func maybePromptForPairing(record: DeviceRecord) {
         guard pairingPrompt == nil,
               record.id.transport == .ble,
               let serial = record.serial,
-              !pairedSerials.contains(serial),
               !declinedPairingThisSession.contains(serial),
               let host = HostAdapter.address()
         else { return }
+
+        let localPaired = pairedControllers[serial] != nil
+        let onDevicePaired: Bool? = record.onDeviceHostAddresses.map { $0.contains(host) }
+
+        let intent: PairingPrompt.Intent?
+        switch (localPaired, onDevicePaired) {
+        case (true,  true?):  intent = nil           // YES/YES — already paired
+        case (true,  false?): intent = .repair       // YES/NO  — controller forgot us
+        case (false, true?):  intent = .remember     // NO/YES  — we forgot the controller
+        case (false, false?): intent = .pair         // NO/NO   — fresh
+        case (true,  nil):    intent = nil           // flash unknown, local known — trust local
+        case (false, nil):    intent = .pair         // flash unknown, local unpaired — fresh
+        }
+
+        guard let intent else { return }
         pairingPrompt = PairingPrompt(
             deviceID: record.id,
             controllerName: record.profile.name,
             serial: serial,
+            productID: record.advertisement.productID,
             hostAddress: host,
+            intent: intent,
             status: .idle
         )
     }
 
     func acceptPairing() async {
         guard let prompt = pairingPrompt else { return }
+        // .remember adopts the existing on-device pairing locally without any
+        // wire exchange — the controller already has our host address stored.
+        if prompt.intent == .remember {
+            if let record = devices[prompt.deviceID] { recordPairing(for: record) }
+            pairingPrompt = nil
+            return
+        }
         guard let transport = transport(for: prompt.deviceID.transport) else {
             pairingPrompt?.status = .failed("transport unavailable")
             return
@@ -168,8 +251,7 @@ final class BridgeCoordinator {
                 transport: transport,
                 hostAddress: prompt.hostAddress
             )
-            pairedSerials.insert(prompt.serial)
-            UserDefaults.standard.set(Array(pairedSerials), forKey: Self.pairedSerialsKey)
+            if let record = devices[prompt.deviceID] { recordPairing(for: record) }
             pairingPrompt = nil
         } catch {
             pairingPrompt?.status = .failed(String(describing: error))
@@ -183,13 +265,83 @@ final class BridgeCoordinator {
         pairingPrompt = nil
     }
 
-    // Returns whether this controller's serial is in our local "paired" set.
+    // User-initiated pairing from the controller detail sheet. Reuses the same
+    // PairingPrompt + PairingSheet path as the auto-prompt, but bypasses the
+    // session-decline gate since the click is an explicit opt-in.
+    func requestPairing(for record: DeviceRecord) {
+        guard record.id.transport == .ble,
+              let serial = record.serial,
+              let host = HostAdapter.address()
+        else { return }
+        let onDevicePaired: Bool? = record.onDeviceHostAddresses.map { $0.contains(host) }
+        let intent: PairingPrompt.Intent = onDevicePaired == true ? .remember : .pair
+        declinedPairingThisSession.remove(serial)
+        pairingPrompt = PairingPrompt(
+            deviceID: record.id,
+            controllerName: record.profile.name,
+            serial: serial,
+            productID: record.advertisement.productID,
+            hostAddress: host,
+            intent: intent,
+            status: .idle
+        )
+    }
+
+    // Whether requestPairing(for:) would currently succeed for the given record.
+    // Used to enable/disable the "Pair This Device…" button.
+    func canRequestPairing(for record: DeviceRecord) -> Bool {
+        record.id.transport == .ble
+            && record.connectionState == .ready
+            && record.serial != nil
+            && HostAdapter.address() != nil
+    }
+
+    // Live entries first (sorted by serial for stability), then paired-offline
+    // entries (sorted by lastSeenAt desc). A live entry whose serial matches a
+    // paired record is decorated with that record; offline-only entries appear
+    // when a paired controller isn't currently advertising.
+    var listEntries: [ListEntry] {
+        // Track which paired records have been "claimed" by a live row, by
+        // serial OR by peripheralUUID. Peripheral matching lets the live and
+        // offline rows share an identity from the moment the peripheral is
+        // discovered, instead of waiting for the serial flash read.
+        var claimedSerials: Set<String> = []
+        let liveSorted = devices.values.sorted { lhs, rhs in
+            (lhs.serial ?? "") < (rhs.serial ?? "")
+        }
+        var entries: [ListEntry] = liveSorted.map { record in
+            let paired: PairedController? = record.serial.flatMap { pairedControllers[$0] }
+                ?? pairedControllers.values.first { $0.peripheralUUID == record.id.raw }
+            if let p = paired { claimedSerials.insert(p.serial) }
+            // When a paired record matches, use its serial as the row's id
+            // (even before the live record's own serial arrives). This keeps
+            // the row identity stable from offline → live across discovery.
+            let id = paired?.serial ?? record.serial ?? record.id.raw.uuidString
+            return ListEntry(id: id, live: record, paired: paired)
+        }
+        let offline = pairedControllers.values
+            .filter { !claimedSerials.contains($0.serial) }
+            .sorted { $0.lastSeenAt > $1.lastSeenAt }
+        for paired in offline {
+            entries.append(ListEntry(id: paired.serial, live: nil, paired: paired))
+        }
+        return entries
+    }
+
+    // Look up the profile that owns a given product ID across known transports.
+    // Used to render the right icon tint for offline rows (we don't have a
+    // live DeviceRecord for those).
+    func profile(forProductID pid: UInt16) -> (any ControllerProfile)? {
+        profiles.first { $0.bleMatcher?.productID == pid || $0.usbMatcher?.productID == pid }
+    }
+
+    // Returns whether this controller's serial is in our local paired dict.
     // Note this only reflects what WaveBird has recorded — the controller may
     // still hold an LTK for this Mac on its side even after a local forget;
     // that on-device entry only gets cleared when the controller next pairs
     // with something else (or the user re-pairs with WaveBird).
     func isPaired(serial: String) -> Bool {
-        pairedSerials.contains(serial)
+        pairedControllers[serial] != nil
     }
 
     // Forget a serial locally. Re-shows the pairing prompt on the controller's
@@ -197,9 +349,41 @@ final class BridgeCoordinator {
     // the controller — that would wipe the on-device LTK entirely. Add the
     // device-side clear later if the local-only forget proves confusing.
     func forgetPairing(serial: String) {
-        guard pairedSerials.remove(serial) != nil else { return }
-        UserDefaults.standard.set(Array(pairedSerials), forKey: Self.pairedSerialsKey)
+        guard pairedControllers.removeValue(forKey: serial) != nil else { return }
+        persistPairedControllers()
         declinedPairingThisSession.remove(serial)
+    }
+
+    // Persist the user's preferred output mode for a specific paired serial,
+    // and if that controller is currently live, republish its virtual HID in
+    // the new mode immediately. The per-serial preference is applied again on
+    // future .ready transitions for this serial.
+    func setPreferredOutputMode(_ modeID: String, forSerial serial: String) async {
+        guard var paired = pairedControllers[serial] else { return }
+        if paired.preferredOutputModeID != modeID {
+            paired.preferredOutputModeID = modeID
+            pairedControllers[serial] = paired
+            persistPairedControllers()
+        }
+        if let liveID = devices.first(where: { $0.value.serial == serial })?.key {
+            await setOutputMode(modeID, for: liveID)
+        }
+    }
+
+    // Insert/refresh a PairedController entry. Called after a successful
+    // pairing exchange, after a "remember" adoption, and on every .ready of
+    // an already-paired controller (to bump lastSeenAt for list sorting).
+    private func recordPairing(for record: DeviceRecord) {
+        guard let serial = record.serial else { return }
+        pairedControllers[serial] = PairedController(
+            serial: serial,
+            productID: record.advertisement.productID,
+            displayName: record.profile.name,
+            lastSeenAt: Date(),
+            peripheralUUID: record.id.raw,
+            preferredOutputModeID: pairedControllers[serial]?.preferredOutputModeID
+        )
+        persistPairedControllers()
     }
 
     // Persist the new default for future devices, update this device's desired
@@ -256,12 +440,6 @@ final class BridgeCoordinator {
 
             if let cmd = session.parseRumble(type: type, id: id, data: data) {
                 rumbleRefresh.cancel()
-                if let self {
-                    Task { @MainActor in
-                        self.devices[deviceID]?.latestRumble = cmd
-                        self.devices[deviceID]?.latestRumbleAt = Date()
-                    }
-                }
                 // Pump a fresh counter on every outgoing command. GC/Pro dedupe
                 // byte-identical successive payloads, so the tid nibble must vary
                 // even when amplitude doesn't — including when the host drives the
@@ -275,12 +453,28 @@ final class BridgeCoordinator {
                 let interval = Self.mergeRefresh(profile.rumbleRefreshInterval, session.refreshInterval)
                 if let interval, !cmd.isStop {
                     rumbleRefresh.replace(with: Task {
-                        while !Task.isCancelled {
+                        // Watchdog: a refresh task that outlives this window
+                        // means the host hasn't re-sent a rumble cmd in a long
+                        // time — game crash, focus loss, or driver hang. Any of
+                        // those should leave the motor silent, not pumping
+                        // forever. 1 s is well above every supported host's
+                        // refresh cadence (DS4 ~33 ms, Xbox 80 ms, Pro 15 ms),
+                        // so a healthy active rumble always cancels & replaces
+                        // this task long before the deadline.
+                        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+                        while !Task.isCancelled, ContinuousClock.now < deadline {
                             try? await Task.sleep(for: interval)
                             // Re-snapshot per refresh so mid-stream slider tweaks apply.
                             if let payload = profile.encodeRumble(cmd, sequence: rumbleRefresh.nextCounter(), settings: settings.snapshot()) {
                                 try? await transport?.sendVibration(payload, to: deviceID)
                             }
+                        }
+                        // Cancellation = a fresh host cmd took over; that path
+                        // sends its own payload. Only when we hit the deadline
+                        // without being replaced do we force a stop.
+                        if Task.isCancelled { return }
+                        if let payload = profile.encodeRumble(RumbleCommand(), sequence: rumbleRefresh.nextCounter(), settings: settings.snapshot()) {
+                            try? await transport?.sendVibration(payload, to: deviceID)
                         }
                     })
                 }
@@ -299,6 +493,18 @@ final class BridgeCoordinator {
 
     private func republishVirtualHID(for id: DeviceID, modeID: String) async {
         guard var record = devices[id] else { return }
+        // Broadcast an explicit stop before tearing down the VHID. Without it
+        // the controller relies on natural heartbeat-decay (~300 ms) to silence
+        // itself during the gap before the new VHID comes up — fine in
+        // isolation, but repeated mode toggles or a stop swallowed by BLE could
+        // leave a paired controller buzzing.
+        if let stopPayload = record.profile.encodeRumble(
+            RumbleCommand(),
+            sequence: rumbleRefreshBoxes[id]?.nextCounter() ?? 0,
+            settings: rumbleSettings(for: record).snapshot()
+        ) {
+            try? await transport(for: id.transport)?.sendVibration(stopPayload, to: id)
+        }
         record.virtualHID = nil
         devices[id]?.virtualHID = nil
         devices[id]?.session = nil
@@ -435,19 +641,36 @@ final class BridgeCoordinator {
         case .ready(let id):
             devices[id]?.connectionState = .ready
             guard let record = devices[id] else { return }
-            if let (vhid, session) = makeVirtualHID(for: record, modeID: record.outputModeID) {
+            // Apply any per-serial preferred output mode before publishing the
+            // virtual HID, so the user's choice (set while offline) is honored
+            // without a tear-down/republish cycle.
+            let startupModeID: String = {
+                if let serial = record.serial,
+                   let preferred = pairedControllers[serial]?.preferredOutputModeID {
+                    return preferred
+                }
+                return record.outputModeID
+            }()
+            devices[id]?.outputModeID = startupModeID
+            if let (vhid, session) = makeVirtualHID(for: record, modeID: startupModeID) {
                 await vhid.activate()
                 devices[id]?.virtualHID = vhid
                 devices[id]?.session = session
-                devices[id]?.activeOutputModeID = record.outputModeID
+                devices[id]?.activeOutputModeID = startupModeID
                 startDispatch(for: id)
             } else {
                 devices[id]?.connectionState = .failed("Failed to create virtual HID device")
             }
             // All .commandResponse events for this device's init have been
             // processed by now (they're yielded before .ready on the same
-            // stream), so record.serial is populated if the flash read succeeded.
-            if let updated = devices[id] { maybePromptForPairing(record: updated) }
+            // stream), so record.serial / onDeviceHostAddresses are populated
+            // if the flash reads succeeded.
+            if let updated = devices[id] {
+                if let serial = updated.serial, pairedControllers[serial] != nil {
+                    recordPairing(for: updated)  // refresh lastSeenAt
+                }
+                maybePromptForPairing(record: updated)
+            }
         case .commandResponse(let id, let request, let response):
             FileHandle.standardError.write(Data("[ble] cmd:           \(hex(request))\n".utf8))
             if let response {
@@ -528,6 +751,11 @@ final class BridgeCoordinator {
             devices[id]?.calibration.right = cal
             FileHandle.standardError.write(Data("[ble] R stick cal: n=(\(cal.neutralX),\(cal.neutralY)) max=(\(cal.maxX),\(cal.maxY)) min=(\(cal.minX),\(cal.minY))\n".utf8))
         }
+        if let addrs = meta.onDeviceHostAddresses {
+            devices[id]?.onDeviceHostAddresses = addrs
+            let formatted = addrs.map { $0.map { String(format: "%02X", $0) }.joined(separator: ":") }.joined(separator: ", ")
+            FileHandle.standardError.write(Data("[ble] paired hosts: [\(formatted)]\n".utf8))
+        }
     }
 
     private func hex(_ data: Data) -> String {
@@ -601,12 +829,16 @@ final class BridgeCoordinator {
         rumbleRefreshBoxes[id]?.cancel()
         let transport = transport(for: id.transport)
         let refresh = rumbleRefreshBoxes[id]
-        testRumbleTasks[id] = Task { [weak self] in
+        // Detached so the heartbeat loop runs on the global executor instead of
+        // MainActor. Sharing the actor with the UI lets a heavy sheet re-render
+        // delay the next sendVibration; the gameplay rumble path is already
+        // off-main via the HID set-report handler.
+        testRumbleTasks[id] = Task.detached { [weak self] in
             await self?.runTestRumble(pattern, on: id, profile: profile, transport: transport, refresh: refresh, settings: settings)
         }
     }
 
-    private func runTestRumble(
+    nonisolated private func runTestRumble(
         _ pattern: TestRumblePattern,
         on id: DeviceID,
         profile: any ControllerProfile,
@@ -615,10 +847,6 @@ final class BridgeCoordinator {
         settings: RumbleSettings
     ) async {
         @Sendable func send(_ cmd: RumbleCommand) async {
-            await MainActor.run {
-                self.devices[id]?.latestRumble = cmd
-                self.devices[id]?.latestRumbleAt = Date()
-            }
             if let payload = profile.encodeRumble(cmd, sequence: refresh?.nextCounter() ?? 0, settings: settings.snapshot()) {
                 try? await transport?.sendVibration(payload, to: id)
             }
