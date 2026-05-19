@@ -20,28 +20,38 @@ Early. Currently supports:
   analog sticks, all face/shoulder buttons, D-pad, Rumble and Motion
 - **Nintendo Switch 2 Pro Controller** over Bluetooth LE — analog sticks,
   all buttons including Home and Capture, Rumble and Motion
+- **Bluetooth pairing** — WaveBird remembers controllers across launches, so
+  after the first pair you reconnect by pressing any button instead of holding
+  SYNC. Remembered controllers stay visible (offline) in the list.
 
 Not yet supported: Joy-Con 2, Charging Grip and USB connections.
 
 ## Output profiles
 
-Each connected controller can present as a different virtual gamepad. Use the
-per-device drop-down in the app to switch:
+Each connected controller can present as a different virtual gamepad. Open the
+controller card and use the "Use profile" picker on the Configuration tab to
+switch:
 
 | Profile | Rumble | Motion | Notes |
 |---|---|---|---|
-| **Native (Switch 2)** | ❌ | ❌ | Work in progress |
+| **Native (Switch 2)** | GC only | ❌ | Reports as the real controller; few hosts have built-in mappings |
+| **NS2 Passthrough (raw)** | ❌ | ❌ | Forwards report 0x05 verbatim under a vendor descriptor — for apps that speak NS2 |
 | **Switch Pro Controller** | ✅ | ✅ | Recommended |
-| **DualShock 4** | ❌ | ❌ | Work in progress |
-| **DualSense** | ❌ | ❌ | Work in progress |
+| **DualShock 4** | ✅ | ❌ | |
+| **DualSense** | ✅ | ❌ | |
 | **Xbox Wireless Controller** | ✅ | — | Recommended; missing Home button |
 
-The selection persists per-device across reconnects.
+The selection persists per-controller (by serial) across reconnects, and can
+be changed while the controller is offline.
+
+Per-controller rumble tuning (intensity, preset, per-band frequency and
+amplitude) lives on the same Configuration tab. Settings persist per product
+ID, so the same physical controller carries its tuning across re-pairings.
 
 Select output profiles (Switch Pro, DualShock 4, DualSense, Xbox) appear in
 *System Settings → Game Controllers*, where they can be remapped and customized.
-The Native profile does not — virtual HID devices with custom VID/PID don't
-surface there. This is a macOS limitation.
+The Native and Passthrough profiles do not — virtual HID devices with custom
+VID/PID don't surface there. This is a macOS limitation.
 
 ## Requirements
 
@@ -78,11 +88,18 @@ unchecked, check it and relaunch.
 ## Use
 
 1. Launch the app — it begins scanning automatically.
-2. Hold the SYNC button on your controller until the LEDs flash.
+2. Hold the SYNC button on your controller until the LEDs flash. (If you've
+   paired it before, just press any button.)
 3. WaveBird discovers and connects; the controller appears in the device list
    with a live Hz readout once reports are flowing.
-4. Click the controller card to make changes to controller settings
-5. Use the drop-down to choose which virtual gamepad it presents as (Switch Pro, DualSense, Xbox, etc.).
+4. On the first connect of a new controller, WaveBird asks whether to pair it.
+   Accepting writes a long-term key to both sides so future reconnects don't
+   need SYNC. **Pairing overwrites the controller's Nintendo Switch 2 console
+   pairing** — to use it on the console again you'll need to hold SYNC there.
+5. Click the controller card to open its Configuration sheet — pick a virtual
+   gamepad profile or tune rumble. Use the "Forget This Device…" button to drop
+   WaveBird's record of a pairing; the controller keeps its stored key until
+   you pair it with something else.
 
 The virtual gamepad is visible to apps that use the Game Controller framework
 or the WebHID / Gamepad APIs (Chrome / Safari gamepad testers like
