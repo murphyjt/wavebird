@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -21,7 +20,7 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    Toggle("Hide dock icon", isOn: $hideDockIcon)
+                    Toggle("Hide dock icon when closed", isOn: $hideDockIcon)
                     Toggle("Scan for controllers at launch", isOn: $scanAtLaunch)
                 }
             }
@@ -29,20 +28,5 @@ struct SettingsView: View {
             .tabItem { Label("General", systemImage: "gear") }
         }
         .frame(width: 420, height: 220)
-        .onChange(of: hideDockIcon) { _, newValue in
-            applyActivationPolicy(hideDock: newValue)
-        }
-    }
-
-    private func applyActivationPolicy(hideDock: Bool) {
-        if hideDock {
-            // Closing the main window first avoids the .regular → .accessory
-            // transition leaving the app stuck as a dock-icon ghost.
-            for w in NSApp.windows where w.title == "WaveBird" && w.canBecomeMain {
-                w.close()
-            }
-        }
-        NSApp.setActivationPolicy(hideDock ? .accessory : .regular)
-        NSApp.activate(ignoringOtherApps: true)
     }
 }
