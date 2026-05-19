@@ -1,4 +1,3 @@
-import IOKit.hid
 import SwiftUI
 
 @main
@@ -9,13 +8,6 @@ struct WaveBirdApp: App {
         Window("WaveBird", id: "main") {
             ContentView(coordinator: appDelegate.coordinator)
                 .frame(width: 512)
-                .task {
-                    IOHIDRequestAccess(kIOHIDRequestTypePostEvent)
-                    await appDelegate.coordinator.start()
-                    if !appDelegate.coordinator.isScanning {
-                        await appDelegate.coordinator.toggleScan()
-                    }
-                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)

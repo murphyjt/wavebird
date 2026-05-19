@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var launch: LaunchAtLoginService
     @AppStorage("WaveBird.hideDockIcon") private var hideDockIcon = false
+    @AppStorage("WaveBird.scanAtLaunch") private var scanAtLaunch = true
 
     var body: some View {
         TabView {
@@ -21,6 +22,7 @@ struct SettingsView: View {
                 }
                 Section {
                     Toggle("Hide dock icon", isOn: $hideDockIcon)
+                    Toggle("Scan for controllers at launch", isOn: $scanAtLaunch)
                 }
             }
             .formStyle(.grouped)

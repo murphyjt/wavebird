@@ -80,6 +80,13 @@ final class BridgeCoordinator {
     private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
     private static let pairedControllersKey = "WaveBird.pairedControllers"
     private static let legacyPairedSerialsKey = "WaveBird.pairedSerials"
+    private static let scanAtLaunchKey = "WaveBird.scanAtLaunch"
+
+    /// User preference: start scanning automatically when the app launches.
+    /// Defaults to true for first launches.
+    static var scanAtLaunch: Bool {
+        UserDefaults.standard.object(forKey: scanAtLaunchKey) as? Bool ?? true
+    }
     let defaultOutputModeID: String
 
     // Controllers we've previously paired with on this host. Persisted as

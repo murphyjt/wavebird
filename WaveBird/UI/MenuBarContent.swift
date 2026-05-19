@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarContent: View {
     @Bindable var coordinator: BridgeCoordinator
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Button("Open WaveBird") { openMainWindow() }
@@ -38,7 +39,10 @@ struct MenuBarContent: View {
 
         Divider()
 
-        SettingsLink { Text("Settings…") }
+        Button("Settings…") {
+            NSApp.activate(ignoringOtherApps: true)
+            openSettings()
+        }
         Button("Quit WaveBird") { NSApp.terminate(nil) }
     }
 
