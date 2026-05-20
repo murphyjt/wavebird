@@ -47,10 +47,35 @@ struct HIDOutputCatalog: Sendable {
 
     static let nativeID = "native"
 
+    // IDs that always appear in the user-facing profile picker. Other entries
+    // (native, raw passthrough, USB Pro spoof) are advanced and only show when
+    // the picker's "show advanced" state is on (Option-key toggle).
+    static let allowListIDs: Set<String> = ["switchPro", "dualShock4", "dualSense", "xboxSeries"]
+
+    // Picker view of the catalog. The allow-list is always included; advanced
+    // entries appear only when `showAdvanced` is true. `currentSelection` is
+    // always shown regardless, so a controller persisted to an advanced mode
+    // doesn't appear unselected in its own picker.
+    func visibleEntries(showAdvanced: Bool, currentSelection: String? = nil) -> [Entry] {
+        entries.filter { entry in
+            Self.allowListIDs.contains(entry.id)
+                || showAdvanced
+                || entry.id == currentSelection
+        }
+    }
+
+    // First allow-listed entry in catalog order — used as the default
+    // selection when an advanced mode would otherwise be the initial value
+    // but isn't visible.
+    var firstAllowListedID: String {
+        entries.first { Self.allowListIDs.contains($0.id) }?.id ?? Self.nativeID
+    }
+
     static let `default` = HIDOutputCatalog(entries: [
         Entry(id: nativeID,        displayName: "Native (Switch 2)")        { NativeOutput(profile: $0) },
         Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)")   { NS2PassthroughOutput(profile: $0) },
-        Entry(id: "switchPro",     displayName: "Switch Pro Controller")   { _ in SwitchProOutput() },
+        Entry(id: "switchPro",     displayName: "Switch Pro Controller (BT)")  { _ in SwitchProOutput() },
+        Entry(id: "switchProUSB",  displayName: "Switch Pro Controller (USB)") { _ in SwitchProUSBOutput() },
         Entry(id: "dualShock4",    displayName: "DualShock 4")              { _ in DualShock4Output() },
         Entry(id: "dualSense",     displayName: "DualSense")                { _ in DualSenseOutput() },
         Entry(id: "xboxSeries",    displayName: "Xbox Wireless Controller") { _ in XboxSeriesOutput() },

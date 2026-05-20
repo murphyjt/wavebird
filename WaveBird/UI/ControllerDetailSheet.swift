@@ -12,6 +12,7 @@ struct ControllerDetailSheet: View {
 
     @State private var selectedTab: Tab = .configuration
     @State private var forgetConfirmation: ForgetConfirmation?
+    @State private var showAdvancedProfiles = false
 
     private enum Tab: Hashable { case configuration, about }
 
@@ -82,6 +83,7 @@ struct ControllerDetailSheet: View {
             }
             .padding(20)
         }
+        .optionTogglesAdvanced($showAdvancedProfiles)
         .sheet(item: $forgetConfirmation) { confirm in
             ForgetConfirmationSheet(
                 displayName: confirm.displayName,
@@ -105,11 +107,13 @@ struct ControllerDetailSheet: View {
 
     @ViewBuilder
     private func configurationTab(live: DeviceRecord?, paired: KnownController?, settings: RumbleSettings?, isReady: Bool) -> some View {
+        let binding = presentAsBinding(live: live, paired: paired)
         Form {
             Section {
                 LabeledContent("Use profile") {
-                    Picker("", selection: presentAsBinding(live: live, paired: paired)) {
-                        ForEach(coordinator.catalog.entries) { entry in
+                    Picker("", selection: binding) {
+                        ForEach(coordinator.catalog.visibleEntries(showAdvanced: showAdvancedProfiles,
+                                                                   currentSelection: binding.wrappedValue)) { entry in
                             Label(entry.displayName, systemImage: Self.iconName(forOutputModeID: entry.id))
                                 .tag(entry.id)
                         }
