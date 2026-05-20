@@ -35,8 +35,18 @@ struct ProfilePickerSheet: View {
             Picker("Profile", selection: $selectedModeID) {
                 ForEach(coordinator.catalog.visibleEntries(showAdvanced: showAdvanced,
                                                            currentSelection: selectedModeID)) { entry in
-                    Label(entry.displayName, systemImage: iconName(forOutputModeID: entry.id))
-                        .tag(entry.id)
+                    Label {
+                        Text(entry.displayName)
+                    } icon: {
+                        // Brand glyphs (xbox.logo, playstation.logo) have
+                        // different intrinsic widths than gamecontroller.fill;
+                        // a fixed frame keeps text baselines aligned across
+                        // rows in the radio group.
+                        Image(systemName: iconName(forOutputModeID: entry.id))
+                            .frame(width: 22, alignment: .center)
+                    }
+                    .padding(.leading, 8)
+                    .tag(entry.id)
                 }
             }
             .pickerStyle(.radioGroup)
