@@ -106,9 +106,12 @@ struct ContentView: View {
         VStack(spacing: 8) {
             ForEach(coordinator.listEntries) { entry in
                 if let record = entry.live {
-                    LiveControllerRow(record: record, paired: entry.paired) {
-                        openDetail(for: entry.id)
-                    }
+                    LiveControllerRow(
+                        record: record,
+                        paired: entry.paired,
+                        onSelect: { openDetail(for: entry.id) },
+                        onDisconnect: { Task { await coordinator.disconnectController(record.id) } }
+                    )
                 } else if let paired = entry.paired {
                     OfflineControllerRow(paired: paired) {
                         openDetail(for: entry.id)

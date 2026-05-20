@@ -399,6 +399,11 @@ final class BridgeCoordinator {
         persistPairedControllers()
     }
 
+    func disconnectController(_ id: DeviceID) async {
+        guard let transport = transport(for: id.transport) else { return }
+        await transport.disconnect(id)
+    }
+
     // Persist the new default for future devices, update this device's desired
     // mode, and republish its virtual HID if it is currently active.
     func setOutputMode(_ modeID: String, for id: DeviceID) async {
