@@ -193,10 +193,24 @@ actor BLETransport: Transport {
     }
 
     fileprivate func handleStateUpdate(_ state: CBManagerState) {
-        if state != .poweredOn {
-            continuation.yield(.error(nil, "BLE: \(stateName(state))"))
+        // .unknown is the initial state before CB has settled — defer to the
+        // next transition rather than briefly flashing an unavailable UI.
+        if state != .unknown {
+            continuation.yield(.availability(reason: availabilityReason(state)))
         }
         startScanIfReady()
+    }
+
+    private func availabilityReason(_ state: CBManagerState) -> String? {
+        switch state {
+        case .poweredOn: nil
+        case .poweredOff: "Bluetooth is off"
+        case .resetting: "Bluetooth is resetting…"
+        case .unsupported: "Bluetooth is not supported on this Mac"
+        case .unauthorized: "WaveBird doesn't have permission to use Bluetooth"
+        case .unknown: nil
+        @unknown default: "Bluetooth is unavailable"
+        }
     }
 
     fileprivate func handleDiscovery(

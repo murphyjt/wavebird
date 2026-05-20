@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // app launches into .accessory mode without the main window.
         Task { @MainActor in
             await coordinator.start()
-            if BridgeCoordinator.scanAtLaunch, !coordinator.isScanning {
+            if !coordinator.isScanning {
                 await coordinator.toggleScan()
             }
         }

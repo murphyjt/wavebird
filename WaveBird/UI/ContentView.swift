@@ -12,6 +12,9 @@ struct ContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
+            if let reason = coordinator.transportUnavailableReason {
+                transportBanner(reason)
+            }
             if coordinator.listEntries.isEmpty {
                 emptyState
             } else {
@@ -74,19 +77,23 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Controllers")
-                    .font(.headline)
-            }
+        Text("Controllers")
+            .font(.headline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func transportBanner(_ reason: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(reason)
+                .font(.callout)
+                .foregroundStyle(.secondary)
             Spacer()
-            Toggle("Scan for Controllers", isOn: Binding(
-                get: { coordinator.isScanning },
-                set: { _ in Task { await coordinator.toggleScan() } }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.small)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var emptyState: some View {

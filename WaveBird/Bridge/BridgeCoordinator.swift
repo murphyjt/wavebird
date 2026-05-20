@@ -69,6 +69,9 @@ final class BridgeCoordinator {
 
     private(set) var devices: [DeviceID: DeviceRecord] = [:]
     private(set) var isScanning = false
+    /// Non-nil when a transport is unavailable (e.g. Bluetooth is off).
+    /// Cleared when the transport becomes available again.
+    private(set) var transportUnavailableReason: String?
     private(set) var lastReportSnapshot: ReportSnapshot?
     var pairingPrompt: PairingPrompt?
     // The device whose ProfilePickerSheet is currently being shown. Updated via
@@ -82,13 +85,6 @@ final class BridgeCoordinator {
 
     private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
     private static let knownControllersKey = "WaveBird.knownControllers"
-    private static let scanAtLaunchKey = "WaveBird.scanAtLaunch"
-
-    /// User preference: start scanning automatically when the app launches.
-    /// Defaults to true for first launches.
-    static var scanAtLaunch: Bool {
-        UserDefaults.standard.object(forKey: scanAtLaunchKey) as? Bool ?? true
-    }
     let defaultOutputModeID: String
 
     // Controllers we've previously paired with on this host. Persisted as
@@ -766,6 +762,9 @@ final class BridgeCoordinator {
 
         case .error(_, let msg):
             stderrLog(msg)
+
+        case .availability(let reason):
+            transportUnavailableReason = reason
         }
     }
 

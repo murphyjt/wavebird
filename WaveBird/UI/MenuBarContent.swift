@@ -11,12 +11,10 @@ struct MenuBarContent: View {
 
         Divider()
 
-        Toggle("Scan for Controllers", isOn: Binding(
-            get: { coordinator.isScanning },
-            set: { _ in Task { await coordinator.toggleScan() } }
-        ))
-
-        Divider()
+        if let reason = coordinator.transportUnavailableReason {
+            Label(reason, systemImage: "exclamationmark.triangle.fill")
+            Divider()
+        }
 
         let connected = coordinator.listEntries.filter {
             $0.live?.connectionState == .ready

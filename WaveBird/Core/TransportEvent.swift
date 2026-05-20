@@ -30,4 +30,7 @@ enum TransportEvent: Sendable {
     case commandResponse(DeviceID, request: Data, response: CommandResponseFrame?)
     case unmatchedResponse(DeviceID, Data, sourceHandle: UInt16?)
     case error(DeviceID?, String)
+    /// Transport-wide availability. `reason == nil` means available; non-nil
+    /// is a human-readable explanation (e.g. "Bluetooth is off").
+    case availability(reason: String?)
 }

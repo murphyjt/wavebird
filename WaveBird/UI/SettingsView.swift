@@ -4,7 +4,6 @@ struct SettingsView: View {
     @Bindable var launch: LaunchAtLoginService
     @AppStorage("WaveBird.hideDockIcon") private var hideDockIcon = false
     @AppStorage("WaveBird.openInBackground") private var openInBackground = false
-    @AppStorage("WaveBird.scanAtLaunch") private var scanAtLaunch = true
 
     var body: some View {
         TabView {
@@ -23,7 +22,6 @@ struct SettingsView: View {
                 }
                 Section {
                     Toggle("Hide Dock icon when no windows are open", isOn: $hideDockIcon)
-                    Toggle("Scan for controllers at launch", isOn: $scanAtLaunch)
                     if hideDockIcon && openInBackground {
                         HStack(alignment: .center, spacing: 6) {
                             Image(systemName: "info.circle")
@@ -39,6 +37,6 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .tabItem { Label("General", systemImage: "gear") }
         }
-        .frame(width: 420, height: 256)
+        .frame(width: 420, height: 224)
     }
 }
