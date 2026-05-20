@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # git-cliff needs full history + tags
 
       - name: Show toolchain
         run: |
@@ -193,25 +195,53 @@ jobs:
           name: WaveBird-${{ steps.version.outputs.version }}
           path: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
 
+      - name: Generate changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: changelog.md
+
+      - name: Compose release body
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n1 || true)
+          {
+            echo "## Install"
+            echo
+            echo "1. Download \`WaveBird-${VERSION}.dmg\` below."
+            echo "2. Open the DMG and drag \`WaveBird.app\` to \`/Applications\`."
+            echo
+            echo "Signed and notarized by Apple — no Gatekeeper warning."
+            echo
+            echo "## Provenance"
+            echo
+            echo "Verify the build provenance with the GitHub CLI:"
+            echo
+            echo '```sh'
+            echo "gh attestation verify --repo ${REPO} WaveBird-${VERSION}.dmg"
+            echo '```'
+            echo
+            cat changelog.md
+            if [[ -n "$PREV_TAG" ]]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${REPO}/compare/${PREV_TAG}...${TAG}"
+            fi
+          } > release-body.md
+          echo "::group::release-body.md"
+          cat release-body.md
+          echo "::endgroup::"
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
-          generate_release_notes: true
+          body_path: release-body.md
           fail_on_unmatched_files: true
-          body: |
-            ## Install
-
-            1. Download `WaveBird-${{ steps.version.outputs.version }}.dmg` below.
-            2. Open the DMG and drag `WaveBird.app` to `/Applications`.
-
-            Signed and notarized by Apple — no Gatekeeper warning.
-
-            ## Provenance
-
-            Verify the build provenance with the GitHub CLI:
-
-            ```sh
-            gh attestation verify --repo ${{ github.repository }} WaveBird-${{ steps.version.outputs.version }}.dmg
-            ```
