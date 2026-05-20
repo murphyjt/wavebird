@@ -34,8 +34,6 @@ switch:
 
 | Profile | Rumble | Motion | Notes |
 |---|---|---|---|
-| **Native (Switch 2)** | GC only | ❌ | Reports as the real controller; few hosts have built-in mappings |
-| **NS2 Passthrough (raw)** | ❌ | ❌ | Forwards report 0x05 verbatim under a vendor descriptor — for apps that speak NS2 |
 | **Switch Pro Controller** | ✅ | ✅ | Recommended |
 | **DualShock 4** | ✅ | ❌ | |
 | **DualSense** | ✅ | ❌ | |
@@ -48,10 +46,8 @@ Per-controller rumble tuning (intensity, preset, per-band frequency and
 amplitude) lives on the same Configuration tab. Settings persist per product
 ID, so the same physical controller carries its tuning across re-pairings.
 
-Select output profiles (Switch Pro, DualShock 4, DualSense, Xbox) appear in
-*System Settings → Game Controllers*, where they can be remapped and customized.
-The Native and Passthrough profiles do not — virtual HID devices with custom
-VID/PID don't surface there. This is a macOS limitation.
+These profiles appear in *System Settings → Game Controllers*, where they can
+be remapped and customized.
 
 ## Requirements
 
