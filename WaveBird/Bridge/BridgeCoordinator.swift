@@ -36,6 +36,7 @@ struct DeviceRecord: Identifiable {
     // makeSession(). Stateless outputs return self; stateful spoofs (Switch
     // Pro) return an actor that owns handshake/mode state for this connection.
     var session: (any HIDOutputSession)?
+    var awaitingProfileSelection: Bool = false
 }
 
 // One row in the controllers list. Either a currently-advertising/connected
@@ -45,7 +46,7 @@ struct DeviceRecord: Identifiable {
 struct ListEntry: Identifiable, Sendable {
     let id: String
     let live: DeviceRecord?
-    let paired: PairedController?
+    let paired: KnownController?
 
     var displayName: String {
         paired?.displayName ?? live?.profile.name ?? "Unknown controller"
@@ -70,16 +71,17 @@ final class BridgeCoordinator {
     private(set) var isScanning = false
     private(set) var lastReportSnapshot: ReportSnapshot?
     var pairingPrompt: PairingPrompt?
-    // ListEntry.id of the controller shown in the controller-detail Window.
-    // Written by every caller that opens the window (main-window rows, menu
-    // bar item); ControllerDetailWindow reads it. Not cleared on close — the
-    // next open always overwrites first, which avoids a race where SwiftUI
-    // evaluates the window body against a stale nil.
-    var pendingDetailEntryID: String?
+    // The device whose ProfilePickerSheet is currently being shown. Updated via
+    // advanceAwaitingProfileSelection() — multiple controllers reaching .ready at
+    // once each get a sheet in turn (next one shows when the current is resolved).
+    private(set) var awaitingProfileSelectionID: DeviceID?
+
+    private func advanceAwaitingProfileSelection() {
+        awaitingProfileSelectionID = devices.first { $0.value.awaitingProfileSelection }?.key
+    }
 
     private static let outputModeDefaultsKey = "WaveBird.hidOutputMode"
-    private static let pairedControllersKey = "WaveBird.pairedControllers"
-    private static let legacyPairedSerialsKey = "WaveBird.pairedSerials"
+    private static let knownControllersKey = "WaveBird.knownControllers"
     private static let scanAtLaunchKey = "WaveBird.scanAtLaunch"
 
     /// User preference: start scanning automatically when the app launches.
@@ -90,15 +92,21 @@ final class BridgeCoordinator {
     let defaultOutputModeID: String
 
     // Controllers we've previously paired with on this host. Persisted as
-    // JSON in UserDefaults under pairedControllersKey. Mutating callers must
-    // route through persistPairedControllers() so disk + memory stay in sync.
-    private(set) var pairedControllers: [String: PairedController]
+    // JSON in UserDefaults under knownControllersKey. Mutating callers must
+    // route through persistKnownControllers() so disk + memory stay in sync.
+    private(set) var knownControllers: [String: KnownController]
 
     // Per-session "user said not now" set, keyed by serial. Prevents re-prompting
     // on reconnect within the same launch. Cleared at process exit so the user
     // gets another chance next time they open WaveBird.
     @ObservationIgnored
     private var declinedPairingThisSession: Set<String> = []
+
+    // Holds the profile mode chosen in ProfilePickerSheet for controllers whose
+    // KnownController entry doesn't exist yet at selection time. Consumed by
+    // recordController so the preference survives the pairing exchange.
+    @ObservationIgnored
+    private var pendingProfileModeIDs: [String: String] = [:]
 
     @ObservationIgnored
     private var consumerTask: Task<Void, Never>?
@@ -164,53 +172,32 @@ final class BridgeCoordinator {
         self.catalog = catalog
         let stored = UserDefaults.standard.string(forKey: Self.outputModeDefaultsKey)
         self.defaultOutputModeID = stored.flatMap { catalog.entry(id: $0)?.id } ?? HIDOutputCatalog.nativeID
-        self.pairedControllers = Self.loadPairedControllers()
+        self.knownControllers = Self.loadKnownControllers()
     }
 
-    // First read pairedControllersKey (the new JSON shape). If that's absent,
-    // migrate from the prior pairedSerialsKey ([String]) by synthesizing minimal
-    // entries and persisting the new shape. The legacy key is removed once
-    // migration completes so we don't re-do it on every launch.
-    private static func loadPairedControllers() -> [String: PairedController] {
-        let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: pairedControllersKey),
-           let decoded = try? JSONDecoder().decode([String: PairedController].self, from: data) {
-            return decoded
-        }
-        let legacy = defaults.stringArray(forKey: legacyPairedSerialsKey) ?? []
-        guard !legacy.isEmpty else { return [:] }
-        var migrated: [String: PairedController] = [:]
-        for serial in legacy {
-            migrated[serial] = PairedController(
-                serial: serial,
-                productID: 0,
-                displayName: "Paired controller",
-                lastSeenAt: .distantPast
-            )
-        }
-        if let encoded = try? JSONEncoder().encode(migrated) {
-            defaults.set(encoded, forKey: pairedControllersKey)
-        }
-        defaults.removeObject(forKey: legacyPairedSerialsKey)
-        return migrated
+    private static func loadKnownControllers() -> [String: KnownController] {
+        guard let data = UserDefaults.standard.data(forKey: knownControllersKey),
+              let decoded = try? JSONDecoder().decode([String: KnownController].self, from: data)
+        else { return [:] }
+        return decoded
     }
 
-    private func persistPairedControllers() {
-        guard let encoded = try? JSONEncoder().encode(pairedControllers) else { return }
-        UserDefaults.standard.set(encoded, forKey: Self.pairedControllersKey)
+    private func persistKnownControllers() {
+        guard let encoded = try? JSONEncoder().encode(knownControllers) else { return }
+        UserDefaults.standard.set(encoded, forKey: Self.knownControllersKey)
     }
 
     // LTK pairing entrypoints. We always need the host BT address (the value
     // the controller compares to its flash entries when deciding whether to
     // auto-reconnect), so if IOBluetooth can't give it to us we silently skip.
     //
-    // Four (local × on-device) states determine the prompt:
+    // The (local × on-device) matrix:
     //   yes/yes → already paired, no prompt
-    //   yes/no  → intent .repair (something else overwrote our slot)
-    //   no/yes  → intent .remember (we forgot but the controller didn't)
-    //   no/no   → intent .pair (fresh exchange)
+    //   yes/no  → .repair (something else overwrote our slot)
+    //   no/yes  → silently upgrade the local record to isPaired=true, no prompt
+    //   no/no   → .pair (fresh exchange)
     // When the flash read failed (onDeviceHostAddresses still nil at .ready),
-    // we fall back to local-only logic — same behavior as before this branch.
+    // we fall back to local-only logic.
     private func maybePromptForPairing(record: DeviceRecord) {
         guard pairingPrompt == nil,
               record.id.transport == .ble,
@@ -219,17 +206,28 @@ final class BridgeCoordinator {
               let host = HostAdapter.address()
         else { return }
 
-        let localPaired = pairedControllers[serial] != nil
+        let localPaired = knownControllers[serial]?.isPaired == true
         let onDevicePaired: Bool? = record.onDeviceHostAddresses.map { $0.contains(host) }
+
+        // Silently adopt: controller already has this host stored, but our
+        // local record says otherwise. No LTK exchange needed.
+        if !localPaired, onDevicePaired == true {
+            if var entry = knownControllers[serial] {
+                entry.isPaired = true
+                knownControllers[serial] = entry
+                persistKnownControllers()
+            }
+            return
+        }
 
         let intent: PairingPrompt.Intent?
         switch (localPaired, onDevicePaired) {
-        case (true,  true?):  intent = nil           // YES/YES — already paired
-        case (true,  false?): intent = .repair       // YES/NO  — controller forgot us
-        case (false, true?):  intent = .remember     // NO/YES  — we forgot the controller
-        case (false, false?): intent = .pair         // NO/NO   — fresh
-        case (true,  nil):    intent = nil           // flash unknown, local known — trust local
-        case (false, nil):    intent = .pair         // flash unknown, local unpaired — fresh
+        case (true,  true?):  intent = nil      // already paired
+        case (true,  false?): intent = .repair  // controller forgot us
+        case (false, false?): intent = .pair    // fresh
+        case (true,  nil):    intent = nil      // flash unknown, trust local
+        case (false, nil):    intent = .pair    // flash unknown, assume fresh
+        case (false, true?):  intent = nil      // handled above
         }
 
         guard let intent else { return }
@@ -246,13 +244,6 @@ final class BridgeCoordinator {
 
     func acceptPairing() async {
         guard let prompt = pairingPrompt else { return }
-        // .remember adopts the existing on-device pairing locally without any
-        // wire exchange — the controller already has our host address stored.
-        if prompt.intent == .remember {
-            if let record = devices[prompt.deviceID] { recordPairing(for: record) }
-            pairingPrompt = nil
-            return
-        }
         guard let transport = transport(for: prompt.deviceID.transport) else {
             pairingPrompt?.status = .failed("transport unavailable")
             return
@@ -264,7 +255,7 @@ final class BridgeCoordinator {
                 transport: transport,
                 hostAddress: prompt.hostAddress
             )
-            if let record = devices[prompt.deviceID] { recordPairing(for: record) }
+            if let record = devices[prompt.deviceID] { recordController(for: record, isPaired: true) }
             pairingPrompt = nil
         } catch {
             pairingPrompt?.status = .failed(String(describing: error))
@@ -278,38 +269,7 @@ final class BridgeCoordinator {
         pairingPrompt = nil
     }
 
-    // User-initiated pairing from the controller detail sheet. Reuses the same
-    // PairingPrompt + PairingSheet path as the auto-prompt, but bypasses the
-    // session-decline gate since the click is an explicit opt-in.
-    func requestPairing(for record: DeviceRecord) {
-        guard record.id.transport == .ble,
-              let serial = record.serial,
-              let host = HostAdapter.address()
-        else { return }
-        let onDevicePaired: Bool? = record.onDeviceHostAddresses.map { $0.contains(host) }
-        let intent: PairingPrompt.Intent = onDevicePaired == true ? .remember : .pair
-        declinedPairingThisSession.remove(serial)
-        pairingPrompt = PairingPrompt(
-            deviceID: record.id,
-            controllerName: record.profile.name,
-            serial: serial,
-            productID: record.advertisement.productID,
-            hostAddress: host,
-            intent: intent,
-            status: .idle
-        )
-    }
-
-    // Whether requestPairing(for:) would currently succeed for the given record.
-    // Used to enable/disable the "Pair This Device…" button.
-    func canRequestPairing(for record: DeviceRecord) -> Bool {
-        record.id.transport == .ble
-            && record.connectionState == .ready
-            && record.serial != nil
-            && HostAdapter.address() != nil
-    }
-
-    // Live entries first (sorted by serial for stability), then paired-offline
+// Live entries first (sorted by serial for stability), then paired-offline
     // entries (sorted by lastSeenAt desc). A live entry whose serial matches a
     // paired record is decorated with that record; offline-only entries appear
     // when a paired controller isn't currently advertising.
@@ -323,8 +283,8 @@ final class BridgeCoordinator {
             (lhs.serial ?? "") < (rhs.serial ?? "")
         }
         var entries: [ListEntry] = liveSorted.map { record in
-            let paired: PairedController? = record.serial.flatMap { pairedControllers[$0] }
-                ?? pairedControllers.values.first { $0.peripheralUUID == record.id.raw }
+            let paired: KnownController? = record.serial.flatMap { knownControllers[$0] }
+                ?? knownControllers.values.first { $0.peripheralUUID == record.id.raw }
             if let p = paired { claimedSerials.insert(p.serial) }
             // When a paired record matches, use its serial as the row's id
             // (even before the live record's own serial arrives). This keeps
@@ -332,7 +292,7 @@ final class BridgeCoordinator {
             let id = paired?.serial ?? record.serial ?? record.id.raw.uuidString
             return ListEntry(id: id, live: record, paired: paired)
         }
-        let offline = pairedControllers.values
+        let offline = knownControllers.values
             .filter { !claimedSerials.contains($0.serial) }
             .sorted { $0.lastSeenAt > $1.lastSeenAt }
         for paired in offline {
@@ -354,17 +314,63 @@ final class BridgeCoordinator {
     // that on-device entry only gets cleared when the controller next pairs
     // with something else (or the user re-pairs with WaveBird).
     func isPaired(serial: String) -> Bool {
-        pairedControllers[serial] != nil
+        knownControllers[serial]?.isPaired == true
     }
 
-    // Forget a serial locally. Re-shows the pairing prompt on the controller's
-    // next .ready. Does not currently send 0x03/0x08 ("Clear pairing info") to
-    // the controller — that would wipe the on-device LTK entirely. Add the
-    // device-side clear later if the local-only forget proves confusing.
-    func forgetPairing(serial: String) {
-        guard pairedControllers.removeValue(forKey: serial) != nil else { return }
-        persistPairedControllers()
+    // Forget a serial locally. Disconnects the device first if it's currently
+    // live so the forget visibly takes effect (no lingering Ready row). Re-shows
+    // the pairing prompt on the controller's next .ready. Does not currently
+    // send 0x03/0x08 ("Clear pairing info") to the controller — that would wipe
+    // the on-device LTK entirely. Add the device-side clear later if the
+    // local-only forget proves confusing.
+    func forgetController(serial: String) async {
+        if let liveID = devices.first(where: { $0.value.serial == serial })?.key {
+            await disconnectController(liveID)
+            devices.removeValue(forKey: liveID)
+        }
+        guard knownControllers.removeValue(forKey: serial) != nil else { return }
+        persistKnownControllers()
         declinedPairingThisSession.remove(serial)
+    }
+
+    // Called by ProfilePickerSheet when the user confirms their profile choice.
+    // Creates the VHID that was deferred at .ready, then fires the pairing prompt
+    // if needed. Also used as the fallback when the sheet is dismissed without
+    // an explicit selection (defaults to defaultOutputModeID).
+    func activateWithProfile(_ modeID: String, for id: DeviceID) async {
+        guard let record = devices[id], record.awaitingProfileSelection else { return }
+        devices[id]?.awaitingProfileSelection = false
+        devices[id]?.outputModeID = modeID
+        if let serial = record.serial {
+            if knownControllers[serial] != nil {
+                await setPreferredOutputMode(modeID, forSerial: serial)
+            } else {
+                pendingProfileModeIDs[serial] = modeID
+                // If the controller's flash already lists this host, the LTK is
+                // in place — record as paired without any wire exchange.
+                let onDevicePaired = HostAdapter.address().flatMap { record.onDeviceHostAddresses?.contains($0) } ?? false
+                recordController(for: record, isPaired: onDevicePaired)
+            }
+        }
+        guard let r = devices[id] else { return }
+        if let (vhid, session) = makeVirtualHID(for: r, modeID: modeID) {
+            await vhid.activate()
+            devices[id]?.virtualHID = vhid
+            devices[id]?.session = session
+            devices[id]?.activeOutputModeID = modeID
+            startDispatch(for: id)
+        } else {
+            devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+        }
+        if let updated = devices[id] {
+            maybePromptForPairing(record: updated)
+        }
+        advanceAwaitingProfileSelection()
+    }
+
+    func dismissProfilePicker() async {
+        guard let id = awaitingProfileSelectionID else { return }
+        await activateWithProfile(defaultOutputModeID, for: id)
     }
 
     // Persist the user's preferred output mode for a specific paired serial,
@@ -372,31 +378,42 @@ final class BridgeCoordinator {
     // the new mode immediately. The per-serial preference is applied again on
     // future .ready transitions for this serial.
     func setPreferredOutputMode(_ modeID: String, forSerial serial: String) async {
-        guard var paired = pairedControllers[serial] else { return }
+        guard var paired = knownControllers[serial] else { return }
         if paired.preferredOutputModeID != modeID {
             paired.preferredOutputModeID = modeID
-            pairedControllers[serial] = paired
-            persistPairedControllers()
+            knownControllers[serial] = paired
+            persistKnownControllers()
         }
         if let liveID = devices.first(where: { $0.value.serial == serial })?.key {
             await setOutputMode(modeID, for: liveID)
         }
     }
 
-    // Insert/refresh a PairedController entry. Called after a successful
-    // pairing exchange, after a "remember" adoption, and on every .ready of
-    // an already-paired controller (to bump lastSeenAt for list sorting).
-    private func recordPairing(for record: DeviceRecord) {
+    // Insert or replace a KnownController entry. isPaired: true after a
+    // successful LTK exchange or when the controller's flash already had this
+    // host's entry; false for profile-only records.
+    private func recordController(for record: DeviceRecord, isPaired: Bool) {
         guard let serial = record.serial else { return }
-        pairedControllers[serial] = PairedController(
+        knownControllers[serial] = KnownController(
             serial: serial,
             productID: record.advertisement.productID,
             displayName: record.profile.name,
             lastSeenAt: Date(),
             peripheralUUID: record.id.raw,
-            preferredOutputModeID: pairedControllers[serial]?.preferredOutputModeID
+            preferredOutputModeID: knownControllers[serial]?.preferredOutputModeID ?? pendingProfileModeIDs[serial],
+            isPaired: isPaired
         )
-        persistPairedControllers()
+        persistKnownControllers()
+    }
+
+    // Refresh lastSeenAt + peripheralUUID for an existing known controller,
+    // preserving its isPaired flag. Called on every .ready of a recognized serial.
+    private func refreshKnownController(for record: DeviceRecord) {
+        guard let serial = record.serial, var entry = knownControllers[serial] else { return }
+        entry.lastSeenAt = Date()
+        entry.peripheralUUID = record.id.raw
+        knownControllers[serial] = entry
+        persistKnownControllers()
     }
 
     func disconnectController(_ id: DeviceID) async {
@@ -659,35 +676,37 @@ final class BridgeCoordinator {
         case .ready(let id):
             devices[id]?.connectionState = .ready
             guard let record = devices[id] else { return }
-            // Apply any per-serial preferred output mode before publishing the
-            // virtual HID, so the user's choice (set while offline) is honored
-            // without a tear-down/republish cycle.
-            let startupModeID: String = {
-                if let serial = record.serial,
-                   let preferred = pairedControllers[serial]?.preferredOutputModeID {
-                    return preferred
-                }
-                return record.outputModeID
-            }()
-            devices[id]?.outputModeID = startupModeID
-            if let (vhid, session) = makeVirtualHID(for: record, modeID: startupModeID) {
-                await vhid.activate()
-                devices[id]?.virtualHID = vhid
-                devices[id]?.session = session
-                devices[id]?.activeOutputModeID = startupModeID
-                startDispatch(for: id)
-            } else {
-                devices[id]?.connectionState = .failed("Failed to create virtual HID device")
-            }
             // All .commandResponse events for this device's init have been
             // processed by now (they're yielded before .ready on the same
             // stream), so record.serial / onDeviceHostAddresses are populated
             // if the flash reads succeeded.
-            if let updated = devices[id] {
-                if let serial = updated.serial, pairedControllers[serial] != nil {
-                    recordPairing(for: updated)  // refresh lastSeenAt
+            if let serial = record.serial,
+               let preferred = knownControllers[serial]?.preferredOutputModeID {
+                // Known preference — create VHID immediately.
+                devices[id]?.outputModeID = preferred
+                if let r = devices[id], let (vhid, session) = makeVirtualHID(for: r, modeID: preferred) {
+                    await vhid.activate()
+                    devices[id]?.virtualHID = vhid
+                    devices[id]?.session = session
+                    devices[id]?.activeOutputModeID = preferred
+                    startDispatch(for: id)
+                } else {
+                    devices[id]?.connectionState = .failed("Failed to create virtual HID device")
                 }
-                maybePromptForPairing(record: updated)
+                if let updated = devices[id] {
+                    refreshKnownController(for: updated)
+                    maybePromptForPairing(record: updated)
+                }
+            } else {
+                // No stored preference — ask the user before creating the VHID.
+                devices[id]?.awaitingProfileSelection = true
+                if let updated = devices[id] {
+                    refreshKnownController(for: updated)
+                }
+                // If another picker is already showing, this device just gets
+                // queued — advance only picks it up once the current one resolves.
+                advanceAwaitingProfileSelection()
+                // maybePromptForPairing deferred to activateWithProfile.
             }
         case .commandResponse(let id, let request, let response):
             FileHandle.standardError.write(Data("[ble] cmd:           \(hex(request))\n".utf8))
@@ -715,6 +734,8 @@ final class BridgeCoordinator {
             FileHandle.standardError.write(Data("[ble] orphan \(label): \(hex(data))\n".utf8))
 
         case .disconnected(let id, _):
+            devices[id]?.awaitingProfileSelection = false
+            advanceAwaitingProfileSelection()
             dispatchTasks[id]?.cancel()
             dispatchTasks[id] = nil
             stateContinuations[id]?.finish()

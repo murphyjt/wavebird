@@ -68,17 +68,13 @@ struct ControllerDetailSheet: View {
             Divider()
 
             HStack {
-                if let pairedSerial = paired?.serial {
+                if let known = paired {
                     Button("Forget This Device…", role: .destructive) {
-                        forgetConfirmation = ForgetConfirmation(serial: pairedSerial, displayName: displayName)
+                        forgetConfirmation = ForgetConfirmation(serial: known.serial, displayName: displayName)
                     }
-                    .help("Removes WaveBird's record of this pairing so you'll be asked again on the next connect. The controller keeps its stored key until you pair it with something else.")
-                } else if let live {
-                    Button("Pair This Device…") {
-                        coordinator.requestPairing(for: live)
-                        onDismiss()
-                    }
-                    .disabled(!coordinator.canRequestPairing(for: live))
+                    .help(known.isPaired
+                          ? "Removes WaveBird's record of this pairing and its saved profile. The controller keeps its stored key until you pair it with something else."
+                          : "Removes this controller's saved profile. You'll be asked again the next time it connects.")
                 }
                 Spacer()
                 Button("Done", action: onDismiss)
@@ -90,9 +86,15 @@ struct ControllerDetailSheet: View {
             ForgetConfirmationSheet(
                 displayName: confirm.displayName,
                 onForget: {
+                    let serial = confirm.serial
                     forgetConfirmation = nil
-                    coordinator.forgetPairing(serial: confirm.serial)
-                    onDismiss()
+                    // Defer window dismiss so SwiftUI can finish dismissing the
+                    // confirmation sheet first; calling dismissWindow while a
+                    // child sheet is still animating leaves the window open.
+                    Task { @MainActor in
+                        await coordinator.forgetController(serial: serial)
+                        onDismiss()
+                    }
                 },
                 onCancel: {
                     forgetConfirmation = nil
@@ -102,7 +104,7 @@ struct ControllerDetailSheet: View {
     }
 
     @ViewBuilder
-    private func configurationTab(live: DeviceRecord?, paired: PairedController?, settings: RumbleSettings?, isReady: Bool) -> some View {
+    private func configurationTab(live: DeviceRecord?, paired: KnownController?, settings: RumbleSettings?, isReady: Bool) -> some View {
         Form {
             Section {
                 LabeledContent("Use profile") {
@@ -130,7 +132,7 @@ struct ControllerDetailSheet: View {
     }
 
     @ViewBuilder
-    private func aboutTab(displayName: String, serial: String?, paired: PairedController?, connectionState: DeviceConnectionState?) -> some View {
+    private func aboutTab(displayName: String, serial: String?, paired: KnownController?, connectionState: DeviceConnectionState?) -> some View {
         Form {
             Section {
                 LabeledContent("Device Type") {
@@ -166,11 +168,8 @@ struct ControllerDetailSheet: View {
                 .background(tint)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(displayName)
-                        .font(.title3.weight(.semibold))
-                    if paired { PairedBadge() }
-                }
+                Text(displayName)
+                    .font(.title3.weight(.semibold))
                 HStack(spacing: 6) {
                     Circle()
                         .fill(Self.stateColor(state))
@@ -188,7 +187,7 @@ struct ControllerDetailSheet: View {
     // Present-as picker binding. Writes to the live record (republishes the
     // virtual HID) and persists the per-serial preference so the choice
     // survives disconnects. Reads prefer live → paired preference → global default.
-    private func presentAsBinding(live: DeviceRecord?, paired: PairedController?) -> Binding<String> {
+    private func presentAsBinding(live: DeviceRecord?, paired: KnownController?) -> Binding<String> {
         Binding(
             get: {
                 live?.outputModeID
@@ -223,7 +222,7 @@ struct ControllerDetailSheet: View {
         case .connecting: "Connecting…"
         case .connected: "Connected"
         case .ready: "Ready"
-        case .disconnected, nil: "Disconnected"
+        case .disconnected, nil: "Not Connected"
         case .failed(let msg): "Failed: \(msg)"
         }
     }
@@ -232,7 +231,7 @@ struct ControllerDetailSheet: View {
         switch s {
         case .connected, .ready: .green
         case .connecting, .discovered: .orange
-        case .disconnected, .failed, nil: .secondary
+        case .disconnected, .failed, nil: .red
         }
     }
 

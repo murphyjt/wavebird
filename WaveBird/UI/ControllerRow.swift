@@ -2,7 +2,7 @@ import SwiftUI
 
 struct LiveControllerRow: View {
     let record: DeviceRecord
-    let paired: PairedController?
+    let paired: KnownController?
     let onSelect: () -> Void
     let onDisconnect: () -> Void
 
@@ -21,7 +21,6 @@ struct LiveControllerRow: View {
                             Text(paired?.displayName ?? record.profile.name)
                                 .font(.default)
                                 .foregroundStyle(.primary)
-                            if paired != nil { PairedBadge() }
                         }
                         HStack(spacing: 6) {
                             Circle()
@@ -71,7 +70,7 @@ struct LiveControllerRow: View {
         case .discovered: "Discovered"
         case .connecting: "Connecting…"
         case .connected, .ready: "Connected"
-        case .disconnected: "Disconnected"
+        case .disconnected: "Not Connected"
         case .failed(let msg): "Failed: \(msg)"
         }
     }
@@ -87,7 +86,7 @@ struct LiveControllerRow: View {
 }
 
 struct OfflineControllerRow: View {
-    let paired: PairedController
+    let paired: KnownController
     let onSelect: () -> Void
 
     var body: some View {
@@ -100,17 +99,14 @@ struct OfflineControllerRow: View {
                     .background(Color.secondary)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(paired.displayName)
-                            .font(.default)
-                            .foregroundStyle(.primary)
-                        PairedBadge()
-                    }
+                    Text(paired.displayName)
+                        .font(.default)
+                        .foregroundStyle(.primary)
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(Color.secondary)
+                            .fill(Color.red)
                             .frame(width: 10, height: 10)
-                        Text("Disconnected")
+                        Text("Not Connected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -124,23 +120,11 @@ struct OfflineControllerRow: View {
             .background(Color.secondary.opacity(0.065))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(Rectangle())
-            .opacity(0.75)
         }
         .buttonStyle(.plain)
     }
 }
 
-struct PairedBadge: View {
-    var body: some View {
-        Text("Paired")
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.green.opacity(0.18))
-            .foregroundStyle(.green)
-            .clipShape(Capsule())
-    }
-}
 
 extension Color {
     static let nintendoRed = Color(red: 230/255, green: 0/255, blue: 18/255)

@@ -27,9 +27,8 @@ struct MenuBarContent: View {
             } else {
                 ForEach(connected) { entry in
                     Button {
-                        coordinator.pendingDetailEntryID = entry.id
                         NSApp.activate(ignoringOtherApps: true)
-                        openWindow(id: "controller-detail")
+                        openWindow(id: "controller-detail", value: entry.id)
                     } label: {
                         Label(entry.displayName, systemImage: "gamecontroller.fill")
                     }

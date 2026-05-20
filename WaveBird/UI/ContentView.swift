@@ -36,6 +36,14 @@ struct ContentView: View {
                 PairingSheet(coordinator: coordinator, prompt: prompt)
             }
         }
+        .sheet(item: Binding(
+            get: { coordinator.awaitingProfileSelectionID },
+            set: { newValue in
+                if newValue == nil { Task { await coordinator.dismissProfilePicker() } }
+            }
+        )) { id in
+            ProfilePickerSheet(coordinator: coordinator, deviceID: id)
+        }
         .onChange(of: showSetupSheet) { _, isOpen in
             if isOpen {
                 setupSheetBaselineReadyIDs = Set(coordinator.devices.compactMap {
@@ -55,8 +63,7 @@ struct ContentView: View {
     }
 
     private func openDetail(for id: String) {
-        coordinator.pendingDetailEntryID = id
-        openWindow(id: "controller-detail")
+        openWindow(id: "controller-detail", value: id)
     }
 
     // Stable-orderable snapshot for onChange diffing.

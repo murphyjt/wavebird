@@ -73,26 +73,19 @@ struct PairingSheet: View {
         .frame(width: 420)
     }
 
-    private var iconName: String {
-        switch prompt.intent {
-        case .pair, .repair: "link.badge.plus"
-        case .remember:      "questionmark.folder"
-        }
-    }
+    private var iconName: String { "link.badge.plus" }
 
     private var titlePrefix: String {
         switch prompt.intent {
-        case .pair:     "Pair"
-        case .repair:   "Re-pair"
-        case .remember: "Remember"
+        case .pair:   "Pair"
+        case .repair: "Re-pair"
         }
     }
 
     private var acceptLabel: String {
         switch prompt.intent {
-        case .pair:     "Pair"
-        case .repair:   "Re-pair"
-        case .remember: "Remember"
+        case .pair:   "Pair"
+        case .repair: "Re-pair"
         }
     }
 
@@ -102,15 +95,8 @@ struct PairingSheet: View {
             "Pairing lets WaveBird remember this controller, so you can reconnect by pressing any button instead of holding SYNC."
         case .repair:
             "WaveBird remembers this controller, but the controller no longer recognizes this Mac — probably because it was paired with another device. Re-pair to restore auto-reconnect."
-        case .remember:
-            "This controller is already paired to this Mac at the hardware level, but WaveBird doesn't have a record of it. Add it to WaveBird's list? No re-pairing is needed."
         }
     }
 
-    private var showsOverwriteWarning: Bool {
-        switch prompt.intent {
-        case .pair, .repair: true
-        case .remember:      false
-        }
-    }
+    private var showsOverwriteWarning: Bool { true }
 }

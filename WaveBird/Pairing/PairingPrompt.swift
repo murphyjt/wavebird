@@ -14,14 +14,13 @@ struct PairingPrompt: Sendable, Identifiable {
 
     var id: DeviceID { deviceID }
 
-    // Which of the four (local × on-device) pairing states the user is being
-    // shown. .pair and .repair run the full 4-step exchange (they're the same
-    // code path); .remember just adopts the existing on-device pairing into
-    // WaveBird's local list without sending anything.
+    // The two prompt variants. Both run the full 4-step LTK exchange — the
+    // only difference is the wording shown to the user. When the controller
+    // already has this host's pairing entry locally-forgotten, the coordinator
+    // upgrades the saved record silently and never raises a prompt.
     enum Intent: Sendable, Equatable {
         case pair      // local = no,  on-device = no
         case repair    // local = yes, on-device = no  (controller forgot us)
-        case remember  // local = no,  on-device = yes (we forgot the controller)
     }
 
     enum Status: Sendable, Equatable {

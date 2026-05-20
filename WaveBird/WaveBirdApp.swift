@@ -14,8 +14,10 @@ struct WaveBirdApp: App {
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(openInBackground ? .suppressed : .automatic)
 
-        Window("Controller", id: "controller-detail") {
-            ControllerDetailWindow(coordinator: appDelegate.coordinator)
+        WindowGroup("Controller", id: "controller-detail", for: String.self) { $entryID in
+            if let entryID {
+                ControllerDetailWindow(coordinator: appDelegate.coordinator, entryID: entryID)
+            }
         }
         .defaultLaunchBehavior(.suppressed)
         .windowResizability(.contentSize)
