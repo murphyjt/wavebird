@@ -75,7 +75,7 @@ struct HIDOutputCatalog: Sendable {
         Entry(id: nativeID,        displayName: "Native (Switch 2)")        { NativeOutput(profile: $0) },
         Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)")   { NS2PassthroughOutput(profile: $0) },
         Entry(id: "switchPro",     displayName: "Switch Pro Controller")    { _ in SwitchProOutput() },
-        Entry(id: "switchProUSB",  displayName: "Switch Pro Controller (USB)") { _ in SwitchProUSBOutput() },
+//        Entry(id: "switchProUSB",  displayName: "Switch Pro Controller (USB)") { _ in SwitchProUSBOutput() },
         Entry(id: "dualShock4",    displayName: "DualShock 4")              { _ in DualShock4Output() },
         Entry(id: "dualSense",     displayName: "DualSense")                { _ in DualSenseOutput() },
         Entry(id: "xboxSeries",    displayName: "Xbox Wireless Controller") { _ in XboxSeriesOutput() },
