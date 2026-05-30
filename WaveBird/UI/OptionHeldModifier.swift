@@ -1,19 +1,18 @@
 import AppKit
 import SwiftUI
 
-// View modifier that watches NSEvent's `.flagsChanged` while attached and
-// flips `state` on each rising edge of the Option key (press, not release).
-// Used in profile pickers to reveal advanced/in-development output modes
-// without giving them a permanent UI affordance. Scope is the view's
-// lifetime — when the host view disappears, the monitor is torn down.
 extension View {
-    func optionTogglesAdvanced(_ state: Binding<Bool>) -> some View {
-        modifier(OptionToggleAdvancedModifier(showAdvanced: state))
+    // Mirrors macOS's "hold Option to reveal an alternate action" pattern (e.g.
+    // Quit → Force Quit). Binding stays true only while Option is physically
+    // down; flips back to false on release. Used by the controller row to swap
+    // Disconnect → Split for a Joy-Con pair.
+    func optionHeld(_ state: Binding<Bool>) -> some View {
+        modifier(OptionHeldModifier(held: state))
     }
 }
 
-private struct OptionToggleAdvancedModifier: ViewModifier {
-    @Binding var showAdvanced: Bool
+private struct OptionHeldModifier: ViewModifier {
+    @Binding var held: Bool
     @State private var box = MonitorBox()
 
     func body(content: Content) -> some View {
@@ -25,12 +24,11 @@ private struct OptionToggleAdvancedModifier: ViewModifier {
     @MainActor
     private func install() {
         guard box.monitor == nil else { return }
+        // Seed from the current modifier state so the binding is correct even
+        // if Option was already down when the view appeared.
+        held = NSEvent.modifierFlags.contains(.option)
         box.monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            let nowDown = event.modifierFlags.contains(.option)
-            if nowDown && !box.optionWasDown {
-                showAdvanced.toggle()
-            }
-            box.optionWasDown = nowDown
+            held = event.modifierFlags.contains(.option)
             return event
         }
     }
@@ -40,8 +38,8 @@ private struct OptionToggleAdvancedModifier: ViewModifier {
         if let monitor = box.monitor {
             NSEvent.removeMonitor(monitor)
             box.monitor = nil
-            box.optionWasDown = false
         }
+        held = false
     }
 }
 
@@ -51,5 +49,4 @@ private struct OptionToggleAdvancedModifier: ViewModifier {
 @MainActor
 private final class MonitorBox {
     var monitor: Any?
-    var optionWasDown = false
 }

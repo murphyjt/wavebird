@@ -12,7 +12,6 @@ struct ControllerDetailSheet: View {
 
     @State private var selectedTab: Tab = .configuration
     @State private var forgetConfirmation: ForgetConfirmation?
-    @State private var showAdvancedProfiles = false
 
     private enum Tab: Hashable { case configuration, about }
 
@@ -83,7 +82,6 @@ struct ControllerDetailSheet: View {
             }
             .padding(20)
         }
-        .optionTogglesAdvanced($showAdvancedProfiles)
         .sheet(item: $forgetConfirmation) { confirm in
             ForgetConfirmationSheet(
                 displayName: confirm.displayName,
@@ -112,8 +110,7 @@ struct ControllerDetailSheet: View {
             Section {
                 LabeledContent("Use profile") {
                     Picker("", selection: binding) {
-                        ForEach(coordinator.catalog.visibleEntries(showAdvanced: showAdvancedProfiles,
-                                                                   currentSelection: binding.wrappedValue)) { entry in
+                        ForEach(coordinator.catalog.entries) { entry in
                             Label(entry.displayName, systemImage: Self.iconName(forOutputModeID: entry.id))
                                 .tag(entry.id)
                         }

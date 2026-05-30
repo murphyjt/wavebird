@@ -4,7 +4,6 @@ struct ProfilePickerSheet: View {
     let coordinator: BridgeCoordinator
     let deviceID: DeviceID
     @State private var selectedModeID: String
-    @State private var showAdvanced = false
 
     init(coordinator: BridgeCoordinator, deviceID: DeviceID) {
         self.coordinator = coordinator
@@ -12,7 +11,7 @@ struct ProfilePickerSheet: View {
         // Initial selection prefers the device's current mode if it's in the
         // user-facing allow-list; otherwise falls back to the first allow-listed
         // entry so first-time setup doesn't open with the radio group landing on
-        // a hidden (advanced) mode.
+        // a DEBUG-only advanced mode.
         let current = coordinator.devices[deviceID]?.outputModeID
         let initial: String = {
             if let current, HIDOutputCatalog.allowListIDs.contains(current) { return current }
@@ -33,8 +32,7 @@ struct ProfilePickerSheet: View {
             }
 
             Picker("Profile", selection: $selectedModeID) {
-                ForEach(coordinator.catalog.visibleEntries(showAdvanced: showAdvanced,
-                                                           currentSelection: selectedModeID)) { entry in
+                ForEach(coordinator.catalog.entries) { entry in
                     Label {
                         Text(entry.displayName)
                     } icon: {
@@ -60,7 +58,6 @@ struct ProfilePickerSheet: View {
         }
         .padding(24)
         .frame(width: 320)
-        .optionTogglesAdvanced($showAdvanced)
     }
 
     private var displayName: String {

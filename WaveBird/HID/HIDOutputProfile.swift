@@ -71,15 +71,22 @@ struct HIDOutputCatalog: Sendable {
         entries.first { Self.allowListIDs.contains($0.id) }?.id ?? Self.nativeID
     }
 
-    static let `default` = HIDOutputCatalog(entries: [
-        Entry(id: nativeID,        displayName: "Native (Switch 2)")        { NativeOutput(profile: $0) },
-        Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)")   { NS2PassthroughOutput(profile: $0) },
-        Entry(id: "switchPro",     displayName: "Switch Pro Controller")    { _ in SwitchProOutput() },
-//        Entry(id: "switchProUSB",  displayName: "Switch Pro Controller (USB)") { _ in SwitchProUSBOutput() },
-        Entry(id: "dualShock4",    displayName: "DualShock 4")              { _ in DualShock4Output() },
-        Entry(id: "dualSense",     displayName: "DualSense")                { _ in DualSenseOutput() },
-        Entry(id: "xboxSeries",    displayName: "Xbox Wireless Controller") { _ in XboxSeriesOutput() },
-    ])
+    static let `default`: HIDOutputCatalog = {
+        var entries: [Entry] = [
+            Entry(id: "switchPro",     displayName: "Switch Pro Controller")    { _ in SwitchProOutput() },
+            Entry(id: "dualShock4",    displayName: "DualShock 4")              { _ in DualShock4Output() },
+            Entry(id: "dualSense",     displayName: "DualSense")                { _ in DualSenseOutput() },
+            Entry(id: "xboxSeries",    displayName: "Xbox Wireless Controller") { _ in XboxSeriesOutput() },
+            Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)")   { NS2PassthroughOutput(profile: $0) },
+        ]
+
+        #if DEBUG
+        entries.append(Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)") { NS2PassthroughOutput(profile: $0) })
+        entries.append(Entry(id: "switch2ProSDL", displayName: "Switch 2 Pro (SDL)") { _ in Switch2ProSDLOutput() })
+        #endif
+
+        return HIDOutputCatalog(entries: entries)
+    }()
 }
 
 protocol HIDOutputProfile: Sendable {
