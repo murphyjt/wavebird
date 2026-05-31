@@ -197,12 +197,16 @@ jobs:
 
       - name: Generate changelog
         if: startsWith(github.ref, 'refs/tags/')
-        uses: orhun/git-cliff-action@v4
-        with:
-          config: cliff.toml
-          args: --latest --strip header
+        run: |
+          PREV_RELEASE=$(gh release list --limit 10 --exclude-drafts --json tagName \
+            --jq '[.[] | select(.tagName != "${{ github.ref_name }}")][0].tagName' || true)
+          if [[ -n "$PREV_RELEASE" ]]; then
+            git-cliff "${PREV_RELEASE}..${{ github.ref_name }}" --config cliff.toml --strip header > changelog.md
+          else
+            git-cliff --config cliff.toml --strip header > changelog.md
+          fi
         env:
-          OUTPUT: changelog.md
+          GH_TOKEN: ${{ github.token }}
 
       - name: Compose release body
         if: startsWith(github.ref, 'refs/tags/')
