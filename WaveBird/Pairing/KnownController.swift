@@ -26,4 +26,10 @@ struct KnownController: Codable, Sendable, Hashable {
     // the controller's flash already had this host's entry when first saved.
     // False if WaveBird has only saved a profile preference without pairing.
     var isPaired: Bool
+    // True once the user chose "Don't Ask Again" on the pairing prompt for this
+    // controller: maybePromptForPairing stays silent for it across launches.
+    // Optional so records saved before this field existed still decode (the
+    // whole dict decodes at once; a missing non-optional key would wipe it).
+    // Cleared by forgetting the controller. nil/false both mean "may prompt".
+    var suppressPairingPrompt: Bool? = nil
 }

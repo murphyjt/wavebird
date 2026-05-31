@@ -49,6 +49,12 @@ struct PairingSheet: View {
             }
 
             HStack {
+                Button("Don't Ask Again") {
+                    coordinator.declinePairingPermanently()
+                }
+                .disabled(prompt.status == .inProgress)
+                .help("WaveBird won't offer to pair \(prompt.controllerName) again. Forget the controller in its settings to start asking again.")
+
                 Spacer()
                 Button("Not Now") {
                     coordinator.declinePairing()
