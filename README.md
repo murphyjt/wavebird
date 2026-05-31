@@ -20,17 +20,20 @@ Early. Currently supports:
   analog sticks, all face/shoulder buttons, D-pad, Rumble and Motion
 - **Nintendo Switch 2 Pro Controller** over Bluetooth LE — analog sticks,
   all buttons including Home and Capture, Rumble and Motion
+- **Nintendo Switch 2 Joy-Con (L / R)** over Bluetooth LE — used as a merged
+  L + R pair that presents as a single gamepad, or each side on its own.
+  Sticks, all buttons, Rumble and Motion. Attach the second side and WaveBird
+  forms the pair automatically; split them back into solo controllers anytime.
 - **Bluetooth pairing** — WaveBird remembers controllers across launches, so
   after the first pair you reconnect by pressing any button instead of holding
   SYNC. Remembered controllers stay visible (offline) in the list.
 
-Not yet supported: Joy-Con 2, Charging Grip and USB connections.
+Not yet supported: Charging Grip and USB connections.
 
 ## Output profiles
 
 Each connected controller can present as a different virtual gamepad. Open the
-controller card and use the "Use profile" picker on the Configuration tab to
-switch:
+controller card and use the "Use profile" picker on the General tab to switch:
 
 | Profile | Rumble | Motion | Notes |
 |---|---|---|---|
@@ -42,9 +45,11 @@ switch:
 The selection persists per-controller (by serial) across reconnects, and can
 be changed while the controller is offline.
 
-Per-controller rumble tuning (intensity, preset, per-band frequency and
-amplitude) lives on the same Configuration tab. Settings persist per product
-ID, so the same physical controller carries its tuning across re-pairings.
+The General tab also has a Sticks section for inverting the left and/or right
+stick Y-axis. Per-controller rumble tuning (intensity, preset, per-band
+frequency and amplitude) lives on the Haptics tab. All controller settings
+persist per controller (by serial), so each physical controller carries its
+own configuration across re-pairings.
 
 These profiles appear in *System Settings → Game Controllers*, where they can
 be remapped and customized.
@@ -87,15 +92,15 @@ unchecked, check it and relaunch.
 2. Hold the SYNC button on your controller until the LEDs flash. (If you've
    paired it before, just press any button.)
 3. WaveBird discovers and connects; the controller appears in the device list
-   with a live Hz readout once reports are flowing.
+   once it's ready.
 4. On the first connect of a new controller, WaveBird asks whether to pair it.
    Accepting writes a long-term key to both sides so future reconnects don't
    need SYNC. **Pairing overwrites the controller's Nintendo Switch 2 console
    pairing** — to use it on the console again you'll need to hold SYNC there.
-5. Click the controller card to open its Configuration sheet — pick a virtual
-   gamepad profile or tune rumble. Use the "Forget This Device…" button to drop
-   WaveBird's record of a pairing; the controller keeps its stored key until
-   you pair it with something else.
+5. Click the controller card to open its settings — pick a virtual gamepad
+   profile, invert stick axes (General), or tune rumble (Haptics). Use the
+   "Forget This Device…" button to drop WaveBird's record of a pairing; the
+   controller keeps its stored key until you pair it with something else.
 
 The virtual gamepad is visible to apps that use the Game Controller framework
 or the WebHID / Gamepad APIs (Chrome / Safari gamepad testers like
@@ -110,11 +115,12 @@ or the WebHID / Gamepad APIs (Chrome / Safari gamepad testers like
 - [SDL](https://github.com/libsdl-org/SDL) — `SDL_hidapi_switch2.c` for the
   factory trigger-calibration flash layout and the NS2 LRA `EncodeHDRumble`
   bit packing; `SDL_hidapi_switch.c` for the Switch 1 Pro Controller
-  subcommand handshake the Switch Pro spoof emulates, and the NS1 HD Rumble
-  amplitude table we invert to decode the spoof's incoming rumble (zlib).
+  subcommand handshake the Switch Pro presentation emulates, and the NS1 HD
+  Rumble amplitude table we invert to decode the presentation's incoming
+  rumble (zlib).
 - [dekuNukem/Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering)
   — write-up of the Switch 1 Bluetooth HID protocol (subcommand IDs, report
-  0x30 button/stick layout) used by the Switch Pro spoof, and the
+  0x30 button/stick layout) used by the Switch Pro presentation, and the
   `rumble_data_table.md` amplitude curve we use to decode NS1 HD Rumble
   bytes back into 16-bit amplitudes before re-encoding for NS2 LRA.
 
