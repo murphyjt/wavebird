@@ -89,6 +89,9 @@ final class RumbleSettings: @unchecked Sendable {
     // window covers the full field with a floor that avoids divisor-feel issues.
     static let safeFrequencyRange: ClosedRange<UInt16> = 50...511
 
+    // Persistence key — the controller's NS2 serial (pairs use "Lserial+Rserial").
+    let serial: String
+    // Kept only for the isGameCube UI flag; not part of the persistence key.
     let productID: UInt16
 
     // GC has a single on/off motor (see GameCubeProfile.encodeRumble), so the
@@ -98,9 +101,10 @@ final class RumbleSettings: @unchecked Sendable {
     @ObservationIgnored
     private let lock: OSAllocatedUnfairLock<Snapshot>
 
-    init(productID: UInt16) {
+    init(serial: String, productID: UInt16) {
+        self.serial = serial
         self.productID = productID
-        let loaded = Self.load(productID: productID) ?? .initial
+        let loaded = Self.load(serial: serial) ?? .initial
         self.lock = OSAllocatedUnfairLock(initialState: loaded)
     }
 
@@ -265,18 +269,18 @@ final class RumbleSettings: @unchecked Sendable {
 
     // MARK: - Persistence
 
-    private static func defaultsKey(productID: UInt16) -> String {
-        String(format: "WaveBird.rumble.0x%04X", productID)
+    private static func defaultsKey(serial: String) -> String {
+        "WaveBird.rumble.\(serial)"
     }
 
-    private static func load(productID: UInt16) -> Snapshot? {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey(productID: productID)) else { return nil }
+    private static func load(serial: String) -> Snapshot? {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey(serial: serial)) else { return nil }
         return try? JSONDecoder().decode(Snapshot.self, from: data)
     }
 
     private func persist() {
         let snap = lock.withLock { $0 }
         guard let data = try? JSONEncoder().encode(snap) else { return }
-        UserDefaults.standard.set(data, forKey: Self.defaultsKey(productID: productID))
+        UserDefaults.standard.set(data, forKey: Self.defaultsKey(serial: serial))
     }
 }

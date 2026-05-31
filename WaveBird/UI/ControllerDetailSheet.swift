@@ -10,10 +10,10 @@ struct ControllerDetailSheet: View {
     let entryID: String
     let onDismiss: () -> Void
 
-    @State private var selectedTab: Tab = .configuration
+    @State private var selectedTab: Tab = .general
     @State private var forgetConfirmation: ForgetConfirmation?
 
-    private enum Tab: Hashable { case configuration, about }
+    private enum Tab: Hashable { case general, haptics, about }
 
     private struct ForgetConfirmation: Identifiable {
         let serial: String
@@ -37,19 +37,36 @@ struct ControllerDetailSheet: View {
         let paired = entry.paired
         let connectionState = live?.connectionState
         let isReady = connectionState == .ready
+        let pair = coordinator.joyConPair
+        let isPair = live.map { pair?.leftID == $0.id } ?? false
+        let rightRecord = isPair ? pair.flatMap { coordinator.devices[$0.rightID] } : nil
+        let rightPaired = rightRecord?.serial.flatMap { coordinator.knownControllers[$0] }
         let productID = paired?.productID ?? live?.advertisement.productID
-        let settings = productID.map { coordinator.rumbleSettings(forProductID: $0) }
-        let displayName = paired?.displayName ?? live?.profile.name ?? "Controller"
         let serial = paired?.serial ?? live?.serial
-        let iconTint: Color = live?.virtualHID != nil
-            ? (live?.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed)
-            : .secondary
+        // While paired, both Joy-Con motors read from a single shared
+        // RumbleSettings so the one card on screen drives both sides. Solo
+        // settings are keyed by serial; productID only feeds the isGameCube flag.
+        let settings = isPair
+            ? coordinator.pairRumbleSettings()
+            : serial.map { coordinator.rumbleSettings(forSerial: $0, productID: productID ?? 0) }
+        let axis = isPair
+            ? coordinator.pairAxisSettings()
+            : serial.map { coordinator.axisSettings(forSerial: $0) }
+        let displayName = isPair
+            ? "Joy-Con 2 Pair"
+            : (paired?.displayName ?? live?.profile.name ?? "Controller")
+        let iconTint: Color = isPair
+            ? (coordinator.joyConPairVHIDActive ? .nintendoRed : .secondary)
+            : (live?.virtualHID != nil
+                ? (live?.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed)
+                : .secondary)
 
         VStack(spacing: 0) {
             header(displayName: displayName, state: connectionState, tint: iconTint, paired: paired != nil)
 
             Picker("", selection: $selectedTab) {
-                Text("Configuration").tag(Tab.configuration)
+                Text("General").tag(Tab.general)
+                Text("Haptics").tag(Tab.haptics)
                 Text("About").tag(Tab.about)
             }
             .pickerStyle(.segmented)
@@ -58,17 +75,35 @@ struct ControllerDetailSheet: View {
 
             Group {
                 switch selectedTab {
-                case .configuration:
-                    configurationTab(live: live, paired: paired, settings: settings, isReady: isReady)
+                case .general:
+                    generalTab(live: live, paired: paired, axis: axis)
+                case .haptics:
+                    hapticsTab(live: live, settings: settings, isReady: isReady)
                 case .about:
-                    aboutTab(displayName: displayName, serial: serial, paired: paired, connectionState: connectionState)
+                    if isPair {
+                        aboutTabForPair(
+                            leftLive: live, leftPaired: paired,
+                            rightLive: rightRecord, rightPaired: rightPaired,
+                            connectionState: connectionState
+                        )
+                    } else {
+                        aboutTab(displayName: displayName, serial: serial, paired: paired, connectionState: connectionState)
+                    }
                 }
             }
 
             Divider()
 
             HStack {
-                if let known = paired {
+                if isPair {
+                    Button("Split Paired Controllers", role: .destructive) {
+                        Task {
+                            await coordinator.splitJoyConPair()
+                            onDismiss()
+                        }
+                    }
+                    .help("Tears down the merged Joy-Con virtual device. Both Joy-Cons stay connected but won't auto-pair again this session.")
+                } else if let known = paired {
                     Button("Forget This Device…", role: .destructive) {
                         forgetConfirmation = ForgetConfirmation(serial: known.serial, displayName: displayName)
                     }
@@ -104,7 +139,7 @@ struct ControllerDetailSheet: View {
     }
 
     @ViewBuilder
-    private func configurationTab(live: DeviceRecord?, paired: KnownController?, settings: RumbleSettings?, isReady: Bool) -> some View {
+    private func generalTab(live: DeviceRecord?, paired: KnownController?, axis: AxisSettings?) -> some View {
         let binding = presentAsBinding(live: live, paired: paired)
         Form {
             Section {
@@ -121,6 +156,16 @@ struct ControllerDetailSheet: View {
                 }
             }
 
+            if let axis {
+                StickSettingsSection(settings: axis)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func hapticsTab(live: DeviceRecord?, settings: RumbleSettings?, isReady: Bool) -> some View {
+        Form {
             if let settings {
                 RumbleSettingsCard(coordinator: coordinator, liveDeviceID: isReady ? live?.id : nil, settings: settings)
             }
@@ -157,6 +202,60 @@ struct ControllerDetailSheet: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    // Pair variant: one Section per side so the user can see each Joy-Con's
+    // own serial and last-connected timestamp. The merged identity ("Joy-Con
+    // 2 Pair") lives in the header above; the per-side rows here
+    // surface info specific to each physical Joy-Con.
+    @ViewBuilder
+    private func aboutTabForPair(
+        leftLive: DeviceRecord?, leftPaired: KnownController?,
+        rightLive: DeviceRecord?, rightPaired: KnownController?,
+        connectionState: DeviceConnectionState?
+    ) -> some View {
+        Form {
+            joyConAboutSection(
+                title: "Left Joy-Con",
+                live: leftLive,
+                paired: leftPaired
+            )
+            joyConAboutSection(
+                title: "Right Joy-Con",
+                live: rightLive,
+                paired: rightPaired
+            )
+            if connectionState != .ready {
+                Section {
+                    Text("Press any button on the controller to reconnect. If it's not advertising, hold SYNC to wake it up.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func joyConAboutSection(title: String, live: DeviceRecord?, paired: KnownController?) -> some View {
+        let name = paired?.displayName ?? live?.profile.name ?? title
+        let serial = paired?.serial ?? live?.serial
+        Section(title) {
+            LabeledContent("Device Type") {
+                Text(name)
+            }
+            if let serial {
+                LabeledContent("Serial Number") {
+                    Text(serial)
+                        .monospaced()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let paired, paired.lastSeenAt > .distantPast {
+                LabeledContent("Last Connected",
+                               value: Self.formatLastConnected(paired.lastSeenAt))
+            }
+        }
     }
 
     @ViewBuilder
@@ -206,9 +305,6 @@ struct ControllerDetailSheet: View {
         )
     }
 
-    // Brand glyph for the "Present as" picker. Xbox/PlayStation spoofs get
-    // their platform logos; Nintendo spoofs and native passthrough fall back
-    // to the generic controller glyph (no Switch logo SF Symbol exists).
     private static func iconName(forOutputModeID id: String) -> String {
         switch id {
         case "xboxSeries":             "xbox.logo"
@@ -254,5 +350,18 @@ struct ControllerDetailSheet: View {
             components.day = -Int(elapsed / 86400)
         }
         return formatter.localizedString(from: components)
+    }
+}
+
+// Stick configuration: per-axis Y inversion. Bound to the per-PID AxisSettings,
+// so toggling takes effect live on the running dispatch task and persists.
+private struct StickSettingsSection: View {
+    @Bindable var settings: AxisSettings
+
+    var body: some View {
+        Section("Sticks") {
+            Toggle("Invert Left Stick Y-Axis", isOn: $settings.invertLeftY)
+            Toggle("Invert Right Stick Y-Axis", isOn: $settings.invertRightY)
+        }
     }
 }
