@@ -29,6 +29,18 @@ actor BLETransport: Transport {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var matcherByDevice: [UUID: BLEMatcher] = [:]
     private var inputChars: [UUID: CBCharacteristic] = [:]
+    // Per-peripheral additional input chars → their HID report ID. Used by the
+    // ns2Passthrough path to forward extra Nintendo input reports (e.g. Pro's
+    // Report 0x09 on handle 0x000E) verbatim under the right report ID. Populated
+    // at characteristic discovery so notifications can be tagged, but NOT
+    // subscribed there — secondaries are opt-in per output mode (setSecondaryInputs).
+    private var secondaryInputs: [UUID: [CBUUID: UInt8]] = [:]
+    // Per-peripheral report ID → its discovered secondary characteristic, so a
+    // later setSecondaryInputs can toggle notifications without re-discovering.
+    private var secondaryChars: [UUID: [UInt8: CBCharacteristic]] = [:]
+    // Report IDs currently subscribed per peripheral. Diffed against the
+    // requested set so setSecondaryInputs only flips characteristics that change.
+    private var subscribedSecondaries: [UUID: Set<UInt8>] = [:]
     private var outputChars: [UUID: CBCharacteristic] = [:]
     private var vibrationChars: [UUID: CBCharacteristic] = [:]
     // Per device, a map of subscribed response-char UUID → its handle.
@@ -139,6 +151,19 @@ actor BLETransport: Transport {
             return
         }
         p.writeValue(payload, for: ch, type: writeType(for: ch))
+    }
+
+    func setSecondaryInputs(_ reportIDs: Set<UInt8>, for id: DeviceID) async {
+        guard let p = peripherals[id.raw], let available = secondaryChars[id.raw] else { return }
+        let wanted = reportIDs.intersection(available.keys)
+        let current = subscribedSecondaries[id.raw] ?? []
+        guard wanted != current else { return }
+        for (rid, ch) in available {
+            let shouldSubscribe = wanted.contains(rid)
+            guard shouldSubscribe != current.contains(rid) else { continue }
+            p.setNotifyValue(shouldSubscribe, for: ch)
+        }
+        subscribedSecondaries[id.raw] = wanted
     }
 
     fileprivate func handlePeripheralReady(peripheral: CBPeripheral) {
@@ -256,6 +281,9 @@ actor BLETransport: Transport {
         let reason: DisconnectReason = error.map { .error($0.localizedDescription) } ?? .userInitiated
         // Keep peripherals[]/matcherByDevice[] so connect() can be retried without a fresh advertisement.
         inputChars[peripheral.identifier] = nil
+        secondaryInputs[peripheral.identifier] = nil
+        secondaryChars[peripheral.identifier] = nil
+        subscribedSecondaries[peripheral.identifier] = nil
         outputChars[peripheral.identifier] = nil
         vibrationChars[peripheral.identifier] = nil
         responseHandles[peripheral.identifier] = nil
@@ -274,6 +302,7 @@ actor BLETransport: Transport {
         if let out = m.outputCharacteristic { chars.append(out) }
         if let vib = m.vibrationCharacteristic { chars.append(vib) }
         for rsp in m.responseCharacteristics { chars.append(rsp.uuid) }
+        for extra in m.secondaryInputs { chars.append(extra.uuid) }
         peripheral.discoverCharacteristics(chars, for: svc)
     }
 
@@ -315,6 +344,21 @@ actor BLETransport: Transport {
         // Init complete — open the input-report firehose.
         peripheral.setNotifyValue(true, for: inputCh)
 
+        // Cache any secondary input characteristics (e.g. Pro's Report 0x09) and
+        // their HID report IDs, but DON'T subscribe — secondaries are opt-in per
+        // output mode. setSecondaryInputs flips notifications on once the
+        // coordinator resolves a mode that consumes them (ns2Passthrough).
+        var extras: [CBUUID: UInt8] = [:]
+        var extraChars: [UInt8: CBCharacteristic] = [:]
+        for extra in m.secondaryInputs {
+            guard let ch = chars.first(where: { $0.uuid == extra.uuid }) else { continue }
+            extras[extra.uuid] = extra.reportID
+            extraChars[extra.reportID] = ch
+        }
+        secondaryInputs[peripheral.identifier] = extras
+        secondaryChars[peripheral.identifier] = extraChars
+        subscribedSecondaries[peripheral.identifier] = []
+
         continuation.yield(.ready(id))
     }
 
@@ -323,6 +367,10 @@ actor BLETransport: Transport {
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         if let inputCh = inputChars[peripheral.identifier], characteristic == inputCh {
             continuation.yield(.reportReceived(id, reportID: nil, value))
+            return
+        }
+        if let rid = secondaryInputs[peripheral.identifier]?[characteristic.uuid] {
+            continuation.yield(.reportReceived(id, reportID: rid, value))
             return
         }
         if let handle = responseHandles[peripheral.identifier]?[characteristic.uuid] {

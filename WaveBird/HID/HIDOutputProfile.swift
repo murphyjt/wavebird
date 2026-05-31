@@ -3,26 +3,24 @@ import Foundation
 
 // HIDOutputProfile is the identity card for the virtual HID device we present
 // to macOS — its VID/PID, descriptor, and product strings. It does NOT build
-// reports; that's the session's job. The split lets stateful spoofs (e.g.
-// Switch Pro, which emulates Nintendo's subcommand handshake) share the same
-// dispatch path as stateless ones.
+// reports; that's the session's job. The split lets stateful presentations
+// (e.g. Switch Pro, which emulates Nintendo's subcommand handshake) share the
+// same dispatch path as stateless ones.
 //
-// The default `.native` mode delegates to the connected controller's own
-// ControllerProfile (so the GC controller reports as a GC controller, the Pro
-// as a Pro). The other modes spoof a well-known third-party controller that
+// Output modes present as a well-known third-party controller that
 // GameController.framework, web Gamepad API, and most games already have
 // built-in mappings for.
 //
-// Spoofs map shoulders/triggers via ControllerProfile.standardShoulders so
-// GC's ZL/Z (digital top) land on the bumpers and L/R (analog clicks) land on
-// the triggers — physically correct for each controller despite ButtonSet's
+// Presentations map shoulders/triggers via ControllerProfile.standardShoulders
+// so GC's ZL/Z (digital top) land on the bumpers and L/R (analog clicks) land
+// on the triggers — physically correct for each controller despite ButtonSet's
 // Nintendo-flavored naming.
 
 // Registry of available output modes. Each entry pairs a stable string ID
 // (used for persistence and as the picker tag) with a display name and a
 // factory that produces the HIDOutputProfile instance for a given input
-// controller. Adding a new spoof is a one-line entry here plus the impl
-// file — no central enum to edit.
+// controller. Adding a new presentation is a one-line entry here plus the
+// impl file — no central enum to edit.
 struct HIDOutputCatalog: Sendable {
     struct Entry: Sendable, Identifiable, Hashable {
         let id: String
@@ -39,36 +37,23 @@ struct HIDOutputCatalog: Sendable {
         entries.first { $0.id == id }
     }
 
-    // Resolve to the named entry, falling back to "native" if the ID is
-    // unknown (e.g. a persisted value from a removed mode).
+    // Resolve to the named entry, falling back to the first allow-listed
+    // entry if the ID is unknown (e.g. a persisted value from a removed mode).
     func resolved(id: String) -> Entry {
-        entry(id: id) ?? entry(id: HIDOutputCatalog.nativeID)!
+        entry(id: id) ?? entry(id: firstAllowListedID)!
     }
 
-    static let nativeID = "native"
-
-    // IDs that always appear in the user-facing profile picker. Other entries
-    // (native, raw passthrough, USB Pro spoof) are advanced and only show when
-    // the picker's "show advanced" state is on (Option-key toggle).
+    // The user-facing default presentations. Used only to seed the picker's
+    // initial selection so it never lands on a DEBUG-only advanced mode. The
+    // advanced, in-development presentations are compiled into the catalog only
+    // in DEBUG builds (see `default` below).
     static let allowListIDs: Set<String> = ["switchPro", "dualShock4", "dualSense", "xboxSeries"]
-
-    // Picker view of the catalog. The allow-list is always included; advanced
-    // entries appear only when `showAdvanced` is true. `currentSelection` is
-    // always shown regardless, so a controller persisted to an advanced mode
-    // doesn't appear unselected in its own picker.
-    func visibleEntries(showAdvanced: Bool, currentSelection: String? = nil) -> [Entry] {
-        entries.filter { entry in
-            Self.allowListIDs.contains(entry.id)
-                || showAdvanced
-                || entry.id == currentSelection
-        }
-    }
 
     // First allow-listed entry in catalog order — used as the default
     // selection when an advanced mode would otherwise be the initial value
-    // but isn't visible.
+    // but isn't visible, and as the fallback for unknown persisted IDs.
     var firstAllowListedID: String {
-        entries.first { Self.allowListIDs.contains($0.id) }?.id ?? Self.nativeID
+        entries.first { Self.allowListIDs.contains($0.id) }!.id
     }
 
     static let `default`: HIDOutputCatalog = {
@@ -77,7 +62,6 @@ struct HIDOutputCatalog: Sendable {
             Entry(id: "dualShock4",    displayName: "DualShock 4")              { _ in DualShock4Output() },
             Entry(id: "dualSense",     displayName: "DualSense")                { _ in DualSenseOutput() },
             Entry(id: "xboxSeries",    displayName: "Xbox Wireless Controller") { _ in XboxSeriesOutput() },
-            Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)")   { NS2PassthroughOutput(profile: $0) },
         ]
 
         #if DEBUG
@@ -97,10 +81,22 @@ protocol HIDOutputProfile: Sendable {
     var versionNumber: UInt16 { get }
     var descriptor: Data { get }
 
+    // HID report IDs this presentation needs from the controller's optional
+    // secondary input channels (a subset of BLEMatcher.secondaryInputs). The
+    // coordinator asks the transport to subscribe exactly these when the mode
+    // activates. Default empty — only ns2Passthrough consumes Pro's Report 0x09.
+    // Reports the gameplay/SDL paths use (the shared 0x05) are not secondaries
+    // and are always subscribed.
+    var requiredSecondaryReportIDs: Set<UInt8> { get }
+
     // Construct the per-virtual-device session. Stateless outputs typically
-    // return `self` (dual-conforming to both protocols); stateful spoofs return
+    // return `self` (dual-conforming to both protocols); stateful presentations return
     // a fresh actor instance so handshake state is scoped to one connection.
     func makeSession() -> any HIDOutputSession
+}
+
+extension HIDOutputProfile {
+    var requiredSecondaryReportIDs: Set<UInt8> { [] }
 }
 
 // HIDOutputSession owns the per-connection mutable state and all the
@@ -121,12 +117,27 @@ protocol HIDOutputSession: Sendable {
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand?
 
     // Periodic re-send interval for the last non-stop rumble command. nil =
-    // the host drives cadence itself (DS4/DualSense send ~30 Hz; Pro/native
-    // GC send when the game requests). Non-nil = the host fires once and
-    // expects the device to sustain (Xbox), so the coordinator re-emits at
-    // this period until either a new command arrives or a stop frame
-    // cancels the loop.
+    // the host drives cadence itself (DS4/DualSense send ~30 Hz). Non-nil =
+    // the host fires once and expects the device to sustain (Xbox), so the
+    // coordinator re-emits at this period until either a new command arrives
+    // or a stop frame cancels the loop.
     var refreshInterval: Duration? { get }
+
+    // Raw transport-report forwarding hook for passthrough modes. Returning
+    // non-nil dispatches the bytes verbatim to the VHID and SKIPS the
+    // state-translation pipeline for that report. reportID is the source
+    // report ID — nil for the BLE shared input (Report 0x05, unprefixed on
+    // the wire), set for secondary inputs (e.g. 0x09 from Pro's per-controller
+    // handle). Default returns nil — DS4/DualSense/Xbox/SwitchPro ignore raw
+    // reports and rely on buildReport.
+    func transformRawReport(reportID: UInt8?, data: Data) -> Data?
+
+    // Raw transport vibration payload, derived from a host Set Report. Returning
+    // non-nil bypasses parseRumble → profile.encodeRumble and is sent verbatim
+    // via transport.sendVibration. Used by ns2Passthrough to relay Nintendo's
+    // native Output Report 0x02 to the BLE vibration channel without
+    // round-tripping through the lossy RumbleCommand model.
+    func rawVibrationPayload(type: HIDReportType, id: HIDReportID?, data: Data) -> Data?
 }
 
 extension HIDOutputSession {
@@ -134,14 +145,18 @@ extension HIDOutputSession {
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {}
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? { nil }
     var refreshInterval: Duration? { nil }
+    func transformRawReport(reportID: UInt8?, data: Data) -> Data? { nil }
+    func rawVibrationPayload(type: HIDReportType, id: HIDReportID?, data: Data) -> Data? { nil }
 }
 
 // MARK: - NS2 raw passthrough
 
-// Forwards raw BLE report 0x05 bytes as-is under a vendor HID descriptor.
-// SDL's Switch2 HIDAPI driver will fail its libusb init (unavoidable for virtual
-// devices) and fall back to the generic IOKit HID backend, which reads the
-// vendor report without understanding it. Use this mode for apps that speak NS2.
+// Forwards raw BLE input reports as-is under a vendor HID descriptor. For Pro,
+// the descriptor mirrors Nintendo's physical USB Pro Controller (reports 5/9
+// in, 2 out) and we forward both BLE Report 0x05 (shared input handle) and
+// Report 0x09 (per-controller input handle) verbatim. Host Set Reports
+// (Report 0x02 — subcommands / rumble from SDL's Switch2 init path) are
+// logged to stderr so we can see exactly what the host is trying.
 struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
     let profile: any ControllerProfile
 
@@ -152,48 +167,67 @@ struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
     var versionNumber: UInt16 { 0x0001 }
     var descriptor: Data    { profile.vendorPassthroughDescriptor }
 
-    func makeSession() -> any HIDOutputSession { self }
-
-    func buildReport(_ state: ControllerState) async -> Data {
-        guard let raw = state.rawBLEData else { return Data() }
-        return Data([0x05]) + raw.prefix(63)
-    }
-}
-
-// MARK: - Native passthrough
-
-// Delegates to a ControllerProfile so each connected controller advertises
-// itself with its real VID/PID and descriptor.
-struct NativeOutput: HIDOutputProfile, HIDOutputSession {
-    let profile: any ControllerProfile
-
-    var vendorID: UInt16 { profile.hidVendorID }
-    var productID: UInt16 { profile.hidProductID }
-    var productName: String { profile.name }
-    var manufacturer: String? { "Nintendo" }
-    var versionNumber: UInt16 { 0x0001 }
-    var descriptor: Data { profile.hidDescriptor }
+    // Passthrough forwards Pro's Report 0x09 (handle 0x000E) verbatim alongside
+    // the shared 0x05, so it needs that secondary channel subscribed.
+    var requiredSecondaryReportIDs: Set<UInt8> { [0x09] }
 
     func makeSession() -> any HIDOutputSession { self }
 
-    func buildReport(_ state: ControllerState) async -> Data {
-        profile.buildHIDReport(state)
+    // The state-translation pipeline is short-circuited by transformRawReport,
+    // so buildReport never produces a useful frame in passthrough mode.
+    func buildReport(_ state: ControllerState) async -> Data { Data() }
+
+    // Forward each BLE input report verbatim with its HID report ID prefixed.
+    // BLE delivers payloads without a leading report-ID byte; we add it so the
+    // host's parser keys the data against the right descriptor entry. Payloads
+    // are padded to 63 bytes (the descriptor's declared report count) when the
+    // BLE frame is shorter — BLE's MTU sometimes truncates by a byte vs USB.
+    func transformRawReport(reportID: UInt8?, data: Data) -> Data? {
+        let id: UInt8 = reportID ?? 0x05  // Shared BLE input is unprefixed → Report 5.
+        var payload = data.prefix(63)
+        if payload.count < 63 {
+            payload.append(Data(repeating: 0, count: 63 - payload.count))
+        }
+        return Data([id]) + payload
     }
 
-    // GC native: Output Report 0x03 carries [reportID, seq, val, …padding].
-    // val is on/off (no amplitude). Pro native uses standardGamepadDescriptor
-    // which declares no output reports, so there's no native Pro rumble path.
-    func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
-        guard type == .output, id?.rawValue == 0x03, data.count >= 3 else { return nil }
-        let base = data.startIndex
-        let on: UInt16 = data[base + 2] > 0 ? 0xFFFF : 0
-        return RumbleCommand(leftAmp: on, rightAmp: on)
+    func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {
+        let idStr: String
+        if let id { idStr = String(format: "0x%02X", id.rawValue) } else { idStr = "—" }
+        let hex = data.prefix(64).map { String(format: "%02X", $0) }.joined(separator: " ")
+        let suffix = data.count > 64 ? " … (\(data.count) bytes)" : ""
+        FileHandle.standardError.write(Data(
+            "[passthrough] set-report type=\(type) id=\(idStr) data=[\(hex)]\(suffix)\n".utf8
+        ))
+    }
+
+    // Relay the host's Output Report 0x02 (Pro Controller native rumble format)
+    // to the BLE vibration char with no re-encoding. CoreHID delivers `data` as
+    // the full on-wire frame (64 bytes: report ID + 63 payload), with layout
+    //   data[0]      = 0x02 (report ID)
+    //   data[1]      = state byte L  (enable | ops_cnt | tid)
+    //   data[2..6]   = left  LRA op  (5b, BlueRetro sw2_lra_op_t)
+    //   data[7..16]  = padding
+    //   data[17]     = state byte R
+    //   data[18..22] = right LRA op
+    //   data[23..]   = padding / reserved
+    // BLE wire format is the same layout shifted: byte 0 is 0x00 (BLE framing,
+    // not a HID ID) and total length is 42 bytes. Pro-only — GC's single-motor
+    // 0x03 and JoyCon's 0x01 have different layouts that we don't currently
+    // forward in passthrough.
+    func rawVibrationPayload(type: HIDReportType, id: HIDReportID?, data: Data) -> Data? {
+        guard type == .output, id?.rawValue == 0x02 else { return nil }
+        guard profile.hidProductID == 0x2069 else { return nil }
+        guard data.count >= 42 else { return nil }
+        var payload = Data(data.prefix(42))
+        payload[payload.startIndex] = 0x00
+        return payload
     }
 }
 
 // MARK: - Stick / hat helpers
 
-enum SpoofEncode {
+enum PresentationEncode {
     // Map Int8 (-128..127) to UInt8 (0..255) with neutral at 128.
     static func stickX(_ v: Int8) -> UInt8 { UInt8(clamping: Int(v) + 128) }
     // Same as stickX but inverted — our parser produces "positive Y = up"
