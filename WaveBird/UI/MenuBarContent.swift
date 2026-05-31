@@ -24,11 +24,22 @@ struct MenuBarContent: View {
                 Text("No controllers connected")
             } else {
                 ForEach(connected) { entry in
-                    Button {
-                        NSApp.activate(ignoringOtherApps: true)
-                        openWindow(id: "controller-detail", value: entry.id)
+                    // Bluetooth-menu shape: each controller opens a submenu with
+                    // its actions. Keeps Disconnect out of single-click reach so
+                    // a misclick can't drop a controller mid-game.
+                    Menu {
+                        Button("Controller Info…") {
+                            NSApp.activate(ignoringOtherApps: true)
+                            openWindow(id: "controller-detail", value: entry.id)
+                        }
+                        if let id = entry.live?.id {
+                            Divider()
+                            Button("Disconnect") {
+                                Task { await coordinator.disconnectController(id) }
+                            }
+                        }
                     } label: {
-                        Label(entry.displayName, systemImage: "gamecontroller.fill")
+                        Label(coordinator.listDisplayName(for: entry), systemImage: "gamecontroller.fill")
                     }
                 }
             }
