@@ -195,18 +195,28 @@ jobs:
           name: WaveBird-${{ steps.version.outputs.version }}
           path: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
 
-      - name: Generate changelog
+      - name: Determine changelog range
         if: startsWith(github.ref, 'refs/tags/')
+        id: changelog_range
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           PREV_RELEASE=$(gh release list --limit 10 --exclude-drafts --json tagName \
             --jq '[.[] | select(.tagName != "${{ github.ref_name }}")][0].tagName' || true)
           if [[ -n "$PREV_RELEASE" ]]; then
-            git-cliff "${PREV_RELEASE}..${{ github.ref_name }}" --config cliff.toml --strip header > changelog.md
+            echo "args=${PREV_RELEASE}..${{ github.ref_name }} --strip header" >> "$GITHUB_OUTPUT"
           else
-            git-cliff --config cliff.toml --strip header > changelog.md
+            echo "args=--strip header" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Generate changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: ${{ steps.changelog_range.outputs.args }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          OUTPUT: changelog.md
 
       - name: Compose release body
         if: startsWith(github.ref, 'refs/tags/')
