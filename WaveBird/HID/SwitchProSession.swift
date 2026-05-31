@@ -527,7 +527,7 @@ actor SwitchProSession: HIDOutputSession {
     // MARK: - Encoding helpers
 
     // Pack two 12-bit values into 3 bytes (Nintendo's stick wire format).
-    nonisolated private func packStick12(x: Int8, y: Int) -> (UInt8, UInt8, UInt8) {
+    nonisolated private func packStick12(x: Int16, y: Int) -> (UInt8, UInt8, UInt8) {
         let xv = Self.toStick12(Int(x))
         let yv = Self.toStick12(y)
         let b0 = UInt8(xv & 0xFF)
@@ -536,18 +536,19 @@ actor SwitchProSession: HIDOutputSession {
         return (b0, b1, b2)
     }
 
-    // -128..127 (signed) → 0..4095 (12-bit unsigned), neutral 2048.
+    // Centered 12-bit (-2047..2047) → 0..4095 (12-bit unsigned), neutral 2048.
+    // Both spaces are 12-bit so this is a bit-exact re-center (just add 2048);
+    // the clamp guards the range edges.
     private static func toStick12(_ v: Int) -> UInt16 {
-        let mapped = 2048 + v * 16
-        return UInt16(clamping: mapped)
+        UInt16(min(4095, max(0, 2048 + v)))
     }
 
-    nonisolated private func axis16(_ v: Int8) -> UInt16 { Self.toAxis16(Int(v)) }
+    nonisolated private func axis16(_ v: Int16) -> UInt16 { Self.toAxis16(Int(v)) }
     nonisolated private func axis16(_ v: Int) -> UInt16 { Self.toAxis16(v) }
 
+    // Centered 12-bit → unsigned 16-bit, neutral 0x8000. `<< 4` widens to ~16-bit.
     private static func toAxis16(_ value: Int) -> UInt16 {
-        if value >= 0 { return UInt16(clamping: 0x8000 + value * 258) }
-        else          { return UInt16(clamping: 0x8000 + value * 256) }
+        UInt16(clamping: 0x8000 + (value << 4))
     }
 
     nonisolated private func simpleHat(up: Bool, right: Bool, down: Bool, left: Bool) -> UInt8 {

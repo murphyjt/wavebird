@@ -106,8 +106,8 @@ struct JoyConProfile: ControllerProfile {
     //   R: right stick (offset 0xD) + R-side button bits.
     private func decode(_ d: NS2Report0x05.Decoded, calibration: ControllerCalibration) -> ControllerState {
         let table: [NS2ButtonBits.Entry]
-        let leftStick: SIMD2<Int8>
-        let rightStick: SIMD2<Int8>
+        let leftStick: SIMD2<Int16>
+        let rightStick: SIMD2<Int16>
         switch side {
         case .left:
             table = NS2ButtonBits.joyConL

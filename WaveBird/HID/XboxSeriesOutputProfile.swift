@@ -257,13 +257,11 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         var bytes = [UInt8](repeating: 0, count: 16)
         bytes[0] = 0x01  // Report ID
 
-        func axis16(_ v: Int8, invert: Bool = false) -> UInt16 {
+        // Centered 12-bit (-2047..2047) → unsigned 16-bit, neutral 0x8000.
+        // `<< 4` widens 12-bit to ~16-bit (2047 → 0xFFF0, -2047 → 0x0010).
+        func axis16(_ v: Int16, invert: Bool = false) -> UInt16 {
             let value = invert ? -Int(v) : Int(v)
-            if value >= 0 {
-                return UInt16(clamping: 0x8000 + value * 258)
-            } else {
-                return UInt16(clamping: 0x8000 + value * 256)
-            }
+            return UInt16(clamping: 0x8000 + (value << 4))
         }
         let lx = axis16(state.leftStick.x)
         let ly = axis16(state.leftStick.y)
@@ -362,8 +360,9 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         // axes, so we negate Y here: physical up (internal +) → GIP negative →
         // after ~ → positive... wait the SDL path is: we send down=+, SDL does
         // ~(+) = negative which it treats as "up". Send positive=down for Y.
+        // Centered 12-bit → signed 16-bit, neutral 0. `<< 4` widens to ~16-bit.
         func gipAxis(_ value: Int) -> UInt16 {
-            UInt16(bitPattern: Int16(clamping: value >= 0 ? value * 258 : value * 256))
+            UInt16(bitPattern: Int16(clamping: value << 4))
         }
         let lx = gipAxis(Int(state.leftStick.x))
         let ly = gipAxis(-Int(state.leftStick.y))   // negate: send down=+ so SDL ~ gives up=-

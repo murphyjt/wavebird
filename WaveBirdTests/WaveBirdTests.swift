@@ -19,6 +19,84 @@ struct WaveBirdTests {
 
 }
 
+// Stick pipeline: NS2 raw 12-bit → ControllerState centered 12-bit
+// (-2047..2047, neutral 0) → per-presentation wire width. Guards the
+// resolution mapping and the sign-flip class of bug (a full-deflection axis
+// must land on a rail, never wrap to the opposite extreme).
+struct StickMappingTests {
+
+    // MARK: Input — NS2Sticks (raw 12-bit + calibration → centered 12-bit)
+
+    @Test func uncalibratedAxisCentersAndReachesRails() {
+        // No calibration → raw-2048 directly (raw is already 12-bit).
+        #expect(NS2Sticks.axis(2048, nil, axis: .x) == 0)
+        #expect(NS2Sticks.axis(4095, nil, axis: .x) == 2047)
+        #expect(NS2Sticks.axis(0, nil, axis: .x) == -2047)   // clamped from -2048
+    }
+
+    @Test func yAxisInvertsForUpPositive() {
+        // decode() inverts Y so "positive = up"; X passes through.
+        #expect(NS2Sticks.axis(4095, nil, axis: .y, invert: true) == -2047)
+        #expect(NS2Sticks.axis(2048, nil, axis: .y, invert: true) == 0)
+    }
+
+    @Test func calibrationNormalizesToFullScale() {
+        // Asymmetric extents: above-center 1000, below-center 500.
+        let cal = StickCalibration(neutralX: 2000, neutralY: 2000,
+                                   maxX: 1000, maxY: 1000, minX: 500, minY: 500)
+        #expect(NS2Sticks.axis(2000, cal, axis: .x) == 0)         // neutral
+        #expect(NS2Sticks.axis(3000, cal, axis: .x) == 2047)      // full above
+        #expect(NS2Sticks.axis(1500, cal, axis: .x) == -2047)     // full below (500 extent)
+        #expect(NS2Sticks.axis(2500, cal, axis: .x) == 1023)      // half above
+    }
+
+    @Test func decodeProducesCenteredPair() {
+        #expect(NS2Sticks.decode((2048, 2048), nil) == SIMD2<Int16>(0, 0))
+    }
+
+    // MARK: Output — PlayStation 8-bit (DS4 + DualSense share these)
+
+    @Test func playstation8BitCentersAndReachesRails() {
+        #expect(PresentationEncode.stickX(0) == 128)
+        #expect(PresentationEncode.stickX(2047) == 255)
+        #expect(PresentationEncode.stickX(-2047) == 0)
+        // Y is inverted (HID positive = down).
+        #expect(PresentationEncode.stickY(0) == 128)
+        #expect(PresentationEncode.stickY(2047) == 1)
+        #expect(PresentationEncode.stickY(-2047) == 255)
+    }
+
+    // MARK: Output — Switch Pro 12-bit full report (the original flip regression)
+
+    // Unpack the 3-byte packed left stick from a Report 0x30 (bytes 6..8).
+    private func leftStick12(_ report: Data) -> (UInt16, UInt16) {
+        let b = report.startIndex
+        let x = UInt16(report[b + 6]) | ((UInt16(report[b + 7]) & 0x0F) << 8)
+        let y = (UInt16(report[b + 7]) >> 4) | (UInt16(report[b + 8]) << 4)
+        return (x, y)
+    }
+
+    @Test func switchProFullDeflectionDoesNotWrap() async {
+        let session = SwitchProSession()
+        func state(_ s: SIMD2<Int16>) -> ControllerState {
+            var st = ControllerState.zero
+            st.leftStick = s
+            return st
+        }
+        // Full forward (+Y, "up") and full back (-Y) must land on OPPOSITE rails,
+        // never collapse to the same value — the bug had +full wrapping to 0.
+        let up = leftStick12(await session.buildFullReport(state(SIMD2(0, 2047))))
+        let down = leftStick12(await session.buildFullReport(state(SIMD2(0, -2047))))
+        #expect(up.1 <= 1)        // build negates Y: +2047 → 1
+        #expect(down.1 == 4095)   // -2047 → 4095
+        // X rails too (no negation on X).
+        let right = leftStick12(await session.buildFullReport(state(SIMD2(2047, 0))))
+        let left = leftStick12(await session.buildFullReport(state(SIMD2(-2047, 0))))
+        #expect(right.0 == 4095)
+        #expect(left.0 <= 1)
+    }
+}
+
 // LTK confirmation regression vectors. Numbers are the example request/response
 // frames published in ndeadly's switch2_controller_research/commands.md §0x15.
 // If any of these fail, the byte-reversal convention in NS2PairingFrames is

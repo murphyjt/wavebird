@@ -39,8 +39,15 @@ struct IMUSample: Sendable, Hashable {
 }
 
 struct ControllerState: Sendable {
-    var leftStick:   SIMD2<Int8>
-    var rightStick:  SIMD2<Int8>
+    // Stick axes as a centered 12-bit value: working range -2047...2047,
+    // neutral 0, "positive Y = up" (our game-friendly convention; output
+    // sessions invert for HID's positive-Y-down where needed). This preserves
+    // the controller's native 12-bit resolution end-to-end — output encoders
+    // scale down to their wire width (8-bit PlayStation, 16-bit Xbox) and the
+    // Switch Pro 12-bit path is bit-exact (re-add 2048). The symmetric range
+    // also has no Int.min edge, so negating an axis can't overflow.
+    var leftStick:   SIMD2<Int16>
+    var rightStick:  SIMD2<Int16>
     var triggerL:    UInt8
     var triggerR:    UInt8
     var buttons:     ButtonSet
@@ -74,7 +81,7 @@ struct ControllerState: Sendable {
         return copy
     }
 
-    // Saturating negation — guards the Int8.min (-128) edge that has no positive
-    // counterpart, pinning it to 127 instead of overflowing.
-    private static func negate(_ v: Int8) -> Int8 { Int8(clamping: -Int(v)) }
+    // Negation is exact across the symmetric -2047...2047 working range; the
+    // clamp is belt-and-suspenders against an out-of-range axis.
+    private static func negate(_ v: Int16) -> Int16 { Int16(clamping: -Int(v)) }
 }

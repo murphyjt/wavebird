@@ -228,12 +228,13 @@ struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
 // MARK: - Stick / hat helpers
 
 enum PresentationEncode {
-    // Map Int8 (-128..127) to UInt8 (0..255) with neutral at 128.
-    static func stickX(_ v: Int8) -> UInt8 { UInt8(clamping: Int(v) + 128) }
+    // Map centered 12-bit (-2047..2047) to UInt8 (0..255) with neutral at 128.
+    // `>> 4` drops 12-bit to 8-bit (2047 → 127, -2047 → -128).
+    static func stickX(_ v: Int16) -> UInt8 { UInt8(clamping: 128 + (Int(v) >> 4)) }
     // Same as stickX but inverted — our parser produces "positive Y = up"
     // (game-friendly), while real DS4/DualSense/Xbox controllers send HID-
     // convention "positive Y = down".
-    static func stickY(_ v: Int8) -> UInt8 { UInt8(clamping: 128 - Int(v)) }
+    static func stickY(_ v: Int16) -> UInt8 { UInt8(clamping: 128 - (Int(v) >> 4)) }
 
     // Hat encoding. neutral varies by descriptor: DS4/DualSense use 0x08, while
     // standard HID null state is 0x0F.

@@ -240,11 +240,15 @@ enum NS2Sticks {
         return (b0 | ((b1 & 0x0F) << 8), (b1 >> 4) | (b2 << 4))
     }
 
+    // Centered 12-bit working range for ControllerState stick axes: neutral 0,
+    // full deflection ±2047 (symmetric, no Int.min edge).
+    static let fullScale = 2047
+
     // Apply per-stick factory calibration if available; otherwise fall back to a centered
     // linear map. Calibration math mirrors SDL's MapJoystickAxis
     // (libsdl-org/SDL: src/joystick/hidapi/SDL_hidapi_switch2.c): translate by neutral,
-    // divide by the per-side extent, scale to Int8 range, clamp.
-    static func axis(_ raw: UInt16, _ cal: StickCalibration?, axis: Axis, invert: Bool = false) -> Int8 {
+    // divide by the per-side extent, scale to the centered 12-bit range, clamp.
+    static func axis(_ raw: UInt16, _ cal: StickCalibration?, axis: Axis, invert: Bool = false) -> Int16 {
         let neutral: UInt16
         let maxAbove: UInt16
         let maxBelow: UInt16
@@ -260,21 +264,23 @@ enum NS2Sticks {
         if neutral != 0 && maxAbove != 0 && maxBelow != 0 {
             let delta = Int(raw) - Int(neutral)
             if delta >= 0 {
-                scaled = (delta * 127) / Int(maxAbove)
+                scaled = (delta * fullScale) / Int(maxAbove)
             } else {
-                scaled = (delta * 127) / Int(maxBelow)
+                scaled = (delta * fullScale) / Int(maxBelow)
             }
         } else {
-            scaled = (Int(raw) - 2048) >> 3
+            // No calibration: raw is already 12-bit, so raw-2048 is the centered
+            // value directly — no rescale needed.
+            scaled = Int(raw) - 2048
         }
         let signed = invert ? -scaled : scaled
-        return Int8(clamping: signed)
+        return Int16(min(fullScale, max(-fullScale, signed)))
     }
 
     // Convert a raw 12-bit (x, y) pair from unpack(_:at:) into a calibrated,
-    // Y-inverted SIMD2<Int8> suitable for ControllerState. Every NS2 profile
-    // does this for whichever sticks it exposes.
-    static func decode(_ raw: (UInt16, UInt16), _ cal: StickCalibration?) -> SIMD2<Int8> {
+    // Y-inverted SIMD2<Int16> (centered 12-bit) suitable for ControllerState.
+    // Every NS2 profile does this for whichever sticks it exposes.
+    static func decode(_ raw: (UInt16, UInt16), _ cal: StickCalibration?) -> SIMD2<Int16> {
         SIMD2(
             axis(raw.0, cal, axis: .x),
             axis(raw.1, cal, axis: .y, invert: true)
