@@ -431,7 +431,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "WaveBird uses Bluetooth to connect to your Nintendo Switch 2 controllers.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Joshua Murphy. All rights reserved.";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -480,7 +480,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "WaveBird uses Bluetooth to connect to your Nintendo Switch 2 controllers.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Joshua Murphy. All rights reserved.";
 				LD_RUNPATH_SEARCH_PATHS = (
