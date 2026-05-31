@@ -1,13 +1,18 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
     @Bindable var coordinator: BridgeCoordinator
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var showSetupSheet = false
     // Live device IDs already in .ready at the moment the setup sheet opens.
     // We auto-dismiss the sheet when a *new* device transitions to .ready, not
     // when one that was already there is re-iterated by SwiftUI.
     @State private var setupSheetBaselineReadyIDs: Set<DeviceID> = []
+    // True only while the Option key is physically held. Pair rows read this
+    // to swap Disconnect → Split.
+    @State private var optionHeld = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -22,6 +27,11 @@ struct ContentView: View {
             }
             Spacer(minLength: 0)
             HStack {
+                if coordinator.hasUnpairedJoyCon {
+                    Button("Pair Joy-Cons...") {
+                        Task { await coordinator.pairJoyCons() }
+                    }
+                }
                 Spacer()
                 Button("Set up Game Controller...") { showSetupSheet = true }
             }
@@ -47,6 +57,23 @@ struct ContentView: View {
         )) { id in
             ProfilePickerSheet(coordinator: coordinator, deviceID: id)
         }
+        .sheet(item: Binding(
+            get: { coordinator.joyConWaitingForPartnerID },
+            set: { newValue in
+                // Sheet dismissed → clear the waiting marker. The next .ready
+                // for either Joy-Con will re-arm it.
+                if newValue == nil { coordinator.acknowledgeJoyConWaitingForPartner() }
+            }
+        )) { id in
+            JoyConPartnerSheet(
+                coordinator: coordinator,
+                connectedSide: coordinator.devices[id].map { record in
+                    JoyConPairProfile.isLeft(productID: record.advertisement.productID) ? .left : .right
+                } ?? .left
+            ) {
+                coordinator.acknowledgeJoyConWaitingForPartner()
+            }
+        }
         .onChange(of: showSetupSheet) { _, isOpen in
             if isOpen {
                 setupSheetBaselineReadyIDs = Set(coordinator.devices.compactMap {
@@ -63,6 +90,67 @@ struct ContentView: View {
                 showSetupSheet = false
             }
         }
+        // Bring the app forward when a profile picker needs answering. The
+        // LTK-pair sheet never triggers foregrounding under profile-first
+        // ordering: it always fires after a VHID is built, so the user has
+        // either just engaged with the picker or the controller is known
+        // (and we want the sheet to sit quietly in the background).
+        // ignoringOtherApps: true is required — macOS 14+'s parameterless
+        // activate() is treated as a "cooperative" request that won't
+        // override the frontmost app for a background-triggered event like
+        // a controller connecting. We also openWindow("main") so the sheet
+        // has a host if the user previously closed the window.
+        .onChange(of: coordinator.awaitingProfileSelectionID) { _, newID in
+            guard newID != nil else { return }
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        // Accessory mode (Hide dock icon) suppresses the Window scene's
+        // ability to host a sheet — the prompt would sit invisibly and
+        // time out. Flip back to .regular while any prompt is up, then
+        // restore the user's preference when everything closes.
+        .onChange(of: coordinator.hasActivePrompt) { _, hasPrompt in
+            if hasPrompt {
+                NSApp.setActivationPolicy(.regular)
+                openWindow(id: "main")
+            } else {
+                let hideDock = UserDefaults.standard.bool(forKey: "WaveBird.hideDockIcon")
+                NSApp.setActivationPolicy(hideDock ? .accessory : .regular)
+            }
+        }
+        // 10 s timer for the Joy-Con partner sheet. The key string re-keys
+        // when either the waiting Joy-Con or the covering LTK sheet changes,
+        // so the timer only counts down once the partner sheet is actually
+        // on screen.
+        .task(id: partnerSheetTimerKey) {
+            guard coordinator.joyConWaitingForPartnerID != nil,
+                  coordinator.pairingPrompt == nil else { return }
+            try? await Task.sleep(for: .seconds(10))
+            if Task.isCancelled { return }
+            if coordinator.joyConWaitingForPartnerID != nil,
+               coordinator.pairingPrompt == nil {
+                coordinator.acknowledgeJoyConWaitingForPartner()
+            }
+        }
+        // 30 s timer for the LTK-pair sheet. Times out without recording a
+        // decline so the controller's next .ready can re-prompt.
+        .task(id: coordinator.pairingPrompt?.deviceID) {
+            guard coordinator.pairingPrompt != nil else { return }
+            try? await Task.sleep(for: .seconds(30))
+            if Task.isCancelled { return }
+            if coordinator.pairingPrompt != nil {
+                coordinator.timeoutPairingPrompt()
+            }
+        }
+        .optionHeld($optionHeld)
+    }
+
+    // Composite re-key for the partner-sheet timer's .task(id:). DeviceID? +
+    // Bool inside a String avoids hand-rolling Hashable on a synthesised key.
+    private var partnerSheetTimerKey: String {
+        let waiting = coordinator.joyConWaitingForPartnerID?.raw.uuidString ?? "none"
+        let ltk = coordinator.pairingPrompt != nil ? "ltk" : "clear"
+        return "\(waiting)|\(ltk)"
     }
 
     private func openDetail(for id: String) {
@@ -120,9 +208,22 @@ struct ContentView: View {
         VStack(spacing: 8) {
             ForEach(coordinator.listEntries) { entry in
                 if let record = entry.live {
+                    let pair = coordinator.joyConPair
+                    let isPairLeft = pair?.leftID == record.id
                     LiveControllerRow(
                         record: record,
                         paired: entry.paired,
+                        displayNameOverride: isPairLeft ? coordinator.listDisplayName(for: entry) : nil,
+                        vhidActiveOverride: isPairLeft ? coordinator.joyConPairVHIDActive : nil,
+                        optionHeld: optionHeld,
+                        onSplit: isPairLeft ? {
+                            Task { await coordinator.splitJoyConPair() }
+                            // The detail window keys off this entry's L serial.
+                            // After split it would re-resolve as a solo L row;
+                            // closing matches the explicit-split UX in the
+                            // detail sheet's own Split button.
+                            dismissWindow(id: "controller-detail")
+                        } : nil,
                         onSelect: { openDetail(for: entry.id) },
                         onDisconnect: { Task { await coordinator.disconnectController(record.id) } }
                     )

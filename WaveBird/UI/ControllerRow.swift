@@ -3,8 +3,26 @@ import SwiftUI
 struct LiveControllerRow: View {
     let record: DeviceRecord
     let paired: KnownController?
+    // Overrides used when this row stands in for a Joy-Con 2 pair: the L
+    // record is the visible row and these substitutions reflect the merged
+    // identity + the shared VHID state.
+    var displayNameOverride: String? = nil
+    var vhidActiveOverride: Bool? = nil
+    // When non-nil, this row represents a Joy-Con pair and holding Option
+    // swaps the bottom action to Split Paired Controllers. Mirrors macOS's
+    // Quit → Force Quit alternate-action convention.
+    var optionHeld: Bool = false
+    var onSplit: (() -> Void)? = nil
     let onSelect: () -> Void
     let onDisconnect: () -> Void
+
+    private var vhidActive: Bool {
+        vhidActiveOverride ?? (record.virtualHID != nil)
+    }
+
+    private var displayName: String {
+        displayNameOverride ?? paired?.displayName ?? record.profile.name
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,11 +32,11 @@ struct LiveControllerRow: View {
                         .font(.title3)
                         .foregroundStyle(.white)
                         .frame(width: 30, height: 30)
-                        .background(record.virtualHID != nil ? record.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed : Color.secondary)
+                        .background(vhidActive ? record.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed : Color.secondary)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text(paired?.displayName ?? record.profile.name)
+                            Text(displayName)
                                 .font(.default)
                                 .foregroundStyle(.primary)
                         }
@@ -29,14 +47,6 @@ struct LiveControllerRow: View {
                             Text(stateLabel(record.connectionState))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            if record.connectionState == .ready, record.reportRate > 0 {
-                                HStack(spacing: 4) {
-                                    Text("•").foregroundStyle(.secondary)
-                                    Text("\(Int(record.reportRate)) Hz")
-                                }
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            }
                         }
                     }
                     Spacer()
@@ -52,10 +62,17 @@ struct LiveControllerRow: View {
             if record.connectionState == .ready {
                 Divider()
                 HStack {
-                    Button("Disconnect Controller", action: onDisconnect)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Drops the BLE link. Press any button on the controller to reconnect.")
+                    if optionHeld, let onSplit {
+                        Button("Split Paired Controllers", action: onSplit)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("Tears down the merged Joy-Con virtual device. Both Joy-Cons stay connected but won't auto-pair again this session.")
+                    } else {
+                        Button("Disconnect Controller", action: onDisconnect)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("Drops the Bluetooth link. Press any button on the controller to reconnect.")
+                    }
                     Spacer()
                 }
                 .padding(10)

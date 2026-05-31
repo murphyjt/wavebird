@@ -50,10 +50,6 @@ struct ControllerState: Sendable {
     // controller's native button layout so output sessions don't need to
     // translate Nintendo ZL/Z/L/R semantics themselves.
     var shoulders:   StandardShoulders = StandardShoulders()
-    // Raw BLE report bytes when the source transport is BLE; nil for USB.
-    // Output sessions read this when they need the unparsed report (e.g.
-    // NS2 passthrough mode forwards it verbatim).
-    var rawBLEData:  Data? = nil
 
     static var zero: ControllerState {
         ControllerState(
@@ -66,4 +62,19 @@ struct ControllerState: Sendable {
             timestamp:  .now
         )
     }
+
+    // Flip the sign of the requested stick Y axes (our convention is "positive
+    // Y = up", so negating inverts). Applied to the parsed state before the
+    // output session encodes it, so inversion is presentation-agnostic.
+    func invertingY(left: Bool, right: Bool) -> ControllerState {
+        guard left || right else { return self }
+        var copy = self
+        if left  { copy.leftStick.y  = Self.negate(copy.leftStick.y) }
+        if right { copy.rightStick.y = Self.negate(copy.rightStick.y) }
+        return copy
+    }
+
+    // Saturating negation — guards the Int8.min (-128) edge that has no positive
+    // counterpart, pinning it to 127 instead of overflowing.
+    private static func negate(_ v: Int8) -> Int8 { Int8(clamping: -Int(v)) }
 }
