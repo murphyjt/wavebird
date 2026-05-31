@@ -6,11 +6,9 @@ protocol ControllerProfile: Sendable {
     var bleMatcher: BLEMatcher? { get }
     var usbMatcher: USBMatcher? { get }
 
-    var hidDescriptor: Data { get }
     var hidVendorID: UInt16 { get }
     var hidProductID: UInt16 { get }
 
-    func buildHIDReport(_ state: ControllerState) -> Data
     func parseBLEReport(_ data: Data, calibration: ControllerCalibration) -> ControllerState?
     func parseUSBReport(_ data: Data, reportID: UInt8, calibration: ControllerCalibration) -> ControllerState?
 
@@ -70,7 +68,7 @@ struct ControllerMetadata: Sendable {
 //
 // Amplitudes are 16-bit because that's the precision the upstream protocols
 // produce: SDL/Apple/Linux all pass UInt16 motor amplitudes (0..65535) into
-// their rumble encoders, and the SwitchPro spoof reverses NS1 HD Rumble
+// their rumble encoders, and the SwitchPro presentation reverses NS1 HD Rumble
 // bytes back through dekuNukem's amplitude lookup table to recover the
 // original value. 8-bit-source protocols (DS4/DualSense) scale up by 257.
 struct RumbleCommand: Sendable, Hashable {
@@ -134,11 +132,41 @@ struct BLEMatcher: Sendable {
     let responseCharacteristics: [ResponseChannel]
     let initCommands: [Data]
     let vibrationCharacteristic: CBUUID?
+    // Optional secondary input characteristics whose notifications are
+    // forwarded verbatim through HIDOutputSession.transformRawReport (used
+    // by ns2Passthrough). Notifications on these are tagged with the channel's
+    // reportID — they don't run through parseBLEReport.
+    let secondaryInputs: [InputChannel]
+
+    init(
+        productID: UInt16,
+        serviceUUID: CBUUID,
+        inputCharacteristic: CBUUID,
+        outputCharacteristic: CBUUID?,
+        responseCharacteristics: [ResponseChannel],
+        initCommands: [Data],
+        vibrationCharacteristic: CBUUID?,
+        secondaryInputs: [InputChannel] = []
+    ) {
+        self.productID = productID
+        self.serviceUUID = serviceUUID
+        self.inputCharacteristic = inputCharacteristic
+        self.outputCharacteristic = outputCharacteristic
+        self.responseCharacteristics = responseCharacteristics
+        self.initCommands = initCommands
+        self.vibrationCharacteristic = vibrationCharacteristic
+        self.secondaryInputs = secondaryInputs
+    }
 }
 
 struct ResponseChannel: Sendable {
     let uuid: CBUUID
     let handle: UInt16
+}
+
+struct InputChannel: Sendable {
+    let uuid: CBUUID
+    let reportID: UInt8
 }
 
 struct USBMatcher: Sendable {

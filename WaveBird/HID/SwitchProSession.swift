@@ -1,4 +1,4 @@
-// SwitchProSession — the per-virtual-device session for Switch Pro spoof mode.
+// SwitchProSession — the per-virtual-device session for Switch Pro presentation mode.
 //
 // macOS's AppleGameControllerPersonality driver matches Switch Pro by
 // VID/PID (0x057E/0x2009). When it sees the matching HID descriptor it
@@ -9,6 +9,11 @@
 // subcommands Apple's driver sends, dispatches plausible 0x21 replies, and
 // switches the input report format from simple mode (0x3F) to full mode
 // (0x30) once the driver requests it.
+//
+// SDL-via-hidapi clients (Steam, Dolphin, ...) attach to the same virtual
+// device and run their own USB-style init (`BTrySetupUSB` proprietary
+// handshake on Output 0x80 → Input 0x81, then USB-padded Output 0x01
+// subcommand frames). Both code paths land in this session.
 //
 // Protocol details cross-referenced against:
 //   - libsdl-org/SDL `src/joystick/hidapi/SDL_hidapi_switch.c` (zlib license).
@@ -67,6 +72,11 @@ actor SwitchProSession: HIDOutputSession {
         if rid == 0x80, data.count >= 2 {
             let commandID = data[base + 1]
             log("OUT 0x80 proprietary=0x\(String(format: "%02X", commandID))")
+            // Only SDL-via-hidapi sends 0x80, and SDL only reads 0x30 input
+            // reports. If Apple hasn't transitioned us via subcmd 0x03 yet
+            // (SDL-first attach), do it ourselves so the SDL client isn't
+            // starved of input.
+            if inputMode == .simple { inputMode = .full }
             let reply = buildProprietaryReply(commandID: commandID)
             Task { try? await device.dispatchInputReport(data: reply, timestamp: .now) }
             return
@@ -104,20 +114,23 @@ actor SwitchProSession: HIDOutputSession {
     // [reportID, counter, hdLeft×4, hdRight×4, …]. The 0x01 report's
     // subcommand bytes are handled separately via handleSetReport.
     //
-    // Each 4-byte HD block packs (hi_freq, hi_amp, lo_freq, lo_amp). NS1 L
-    // motor is LF-tuned, R motor is HF-tuned, so we read the LF amplitude
-    // out of the left block and the HF amplitude out of the right block,
-    // then reverse the encoder's lookup table to recover the original
-    // 16-bit amplitude the game requested. Frequency is discarded — NS2
-    // LRA encoders use fixed motor frequencies regardless.
+    // Each 4-byte HD block packs (hi_freq, hi_amp, lo_freq, lo_amp). Apple's
+    // own driver follows the NS1 convention (L motor is LF-tuned, R motor is
+    // HF-tuned), but Steam puts amplitude in the LF byte on BOTH sides, so a
+    // strict "L=LF, R=HF" read leaves R silent when Steam fires its layout-
+    // page button-press feedback. Decode both LF and HF per side and take the
+    // max — preserves both conventions and works regardless of host. Frequency
+    // is discarded — NS2 LRA encoders use fixed motor frequencies.
     nonisolated func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
         guard type == .output, let rid = id?.rawValue,
               rid == 0x10 || rid == 0x01,
               data.count >= 10 else { return nil }
         let b = data.startIndex
-        let lfAmp = Self.decodeNS1LowAmp(pack: data[b + 4], low: data[b + 5])
-        let hfAmp = Self.decodeNS1HighAmp(data[b + 7])
-        return RumbleCommand(leftAmp: lfAmp, rightAmp: hfAmp)
+        let lfAmpL = Self.decodeNS1LowAmp(pack: data[b + 4], low: data[b + 5])
+        let hfAmpL = Self.decodeNS1HighAmp(data[b + 3])
+        let lfAmpR = Self.decodeNS1LowAmp(pack: data[b + 8], low: data[b + 9])
+        let hfAmpR = Self.decodeNS1HighAmp(data[b + 7])
+        return RumbleCommand(leftAmp: max(lfAmpL, hfAmpL), rightAmp: max(lfAmpR, hfAmpR))
     }
 
     // NS1 HD Rumble amplitude lookup. The encoder (SDL EncodeRumbleHighAmplitude
@@ -172,6 +185,9 @@ actor SwitchProSession: HIDOutputSession {
         var payload = [UInt8](repeating: 0, count: 34)
 
         switch subcmdID {
+        case 0x01:  // Bluetooth manual pairing — SDL-via-hidapi USB init sends this; ack only
+            log("subcmd 0x01: BT manual pairing")
+
         case 0x02:  // Request device info
             ack = 0x82
             payload[0] = 0x04          // firmware major
@@ -308,7 +324,7 @@ actor SwitchProSession: HIDOutputSession {
         return v
     }
 
-    // MARK: - SPI flash spoofing
+    // MARK: - SPI flash emulation
     //
     // Apple's driver reads various flash regions during init. We return
     // plausible factory defaults for the ones it normally checks and 0xFF

@@ -4,7 +4,7 @@ import IOKit.hid
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let coordinator = BridgeCoordinator(
-        profiles: [GameCubeProfile(), ProControllerProfile()],
+        profiles: [GameCubeProfile(), ProControllerProfile(), JoyConProfile(side: .left), JoyConProfile(side: .right)],
         transports: [BLETransport()]
     )
     let launch = LaunchAtLoginService()

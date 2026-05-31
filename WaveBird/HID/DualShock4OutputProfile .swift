@@ -105,12 +105,12 @@ struct DualShock4Output: HIDOutputProfile, HIDOutputSession {
         let sh = state.shoulders
         var bytes = [UInt8](repeating: 0, count: 64)
         bytes[0] = 0x01
-        bytes[1] = SpoofEncode.stickX(state.leftStick.x)
-        bytes[2] = SpoofEncode.stickY(state.leftStick.y)
-        bytes[3] = SpoofEncode.stickX(state.rightStick.x)
-        bytes[4] = SpoofEncode.stickY(state.rightStick.y)
+        bytes[1] = PresentationEncode.stickX(state.leftStick.x)
+        bytes[2] = PresentationEncode.stickY(state.leftStick.y)
+        bytes[3] = PresentationEncode.stickX(state.rightStick.x)
+        bytes[4] = PresentationEncode.stickY(state.rightStick.y)
 
-        let hat = SpoofEncode.hat(
+        let hat = PresentationEncode.hat(
             up: s.contains(.dpadUp),
             right: s.contains(.dpadRight),
             down: s.contains(.dpadDown),

@@ -61,6 +61,18 @@ enum NS2Commands {
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ])
 
+    // Cmd 0x03/0x0A — select which input report ID the controller streams.
+    // Per ndeadly: Nintendo defaults to report ID #2 (Pro 2 → 0x09 on handle
+    // 0x000E). Sending this with payload 0x05 switches the controller to the
+    // shared input report on handle 0x000A, which is what SDL's HIDAPI
+    // Switch2 driver parses against (and what WaveBird's own parseBLEReport
+    // expects). This is the BLE-framed twin of SDL's USB init sequence step
+    // "Set report format" (SDL_hidapi_switch2.c:420-423).
+    static let setInputReportFormat05 = Data([
+        0x03, 0x91, 0x01, 0x0A, 0x00, 0x04, 0x00, 0x00,
+        0x05, 0x00, 0x00, 0x00,
+    ])
+
     // Cmd 0x0A/0x08 — "send vibration data". Format not publicly documented; purpose during
     // init is unverified. Both SDL ("Set rumble data?") and BlueRetro send this same payload
     // before turning on the feature mask, so we mirror it.
@@ -257,6 +269,16 @@ enum NS2Sticks {
         }
         let signed = invert ? -scaled : scaled
         return Int8(clamping: signed)
+    }
+
+    // Convert a raw 12-bit (x, y) pair from unpack(_:at:) into a calibrated,
+    // Y-inverted SIMD2<Int8> suitable for ControllerState. Every NS2 profile
+    // does this for whichever sticks it exposes.
+    static func decode(_ raw: (UInt16, UInt16), _ cal: StickCalibration?) -> SIMD2<Int8> {
+        SIMD2(
+            axis(raw.0, cal, axis: .x),
+            axis(raw.1, cal, axis: .y, invert: true)
+        )
     }
 }
 
