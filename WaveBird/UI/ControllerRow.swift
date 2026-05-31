@@ -3,6 +3,11 @@ import SwiftUI
 struct LiveControllerRow: View {
     let record: DeviceRecord
     let paired: KnownController?
+    // VHID-active state, resolved by the coordinator from the live record. The
+    // row never sees the VirtualHIDDevice itself (DeviceRecord hands the view a
+    // wrapper-free copy) so a retained row can't pin the CoreHID device alive
+    // past disconnect.
+    let isVHIDActive: Bool
     // Overrides used when this row stands in for a Joy-Con 2 pair: the L
     // record is the visible row and these substitutions reflect the merged
     // identity + the shared VHID state.
@@ -17,7 +22,7 @@ struct LiveControllerRow: View {
     let onDisconnect: () -> Void
 
     private var vhidActive: Bool {
-        vhidActiveOverride ?? (record.virtualHID != nil)
+        vhidActiveOverride ?? isVHIDActive
     }
 
     private var displayName: String {

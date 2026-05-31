@@ -46,7 +46,13 @@ struct DeviceRecord: Identifiable {
 // past pairings — still rendered as a live row, with a Paired badge).
 struct ListEntry: Identifiable, Sendable {
     let id: String
+    // The live record with its per-connection objects (virtualHID/session)
+    // stripped — see listEntries. The view layer must never hold a strong
+    // VirtualHIDDevice: CoreHID removes the system device only when the last
+    // reference drops, and a SwiftUI value copy (e.g. a closed MenuBarExtra)
+    // would pin it alive long after disconnect. Active state travels as a Bool.
     let live: DeviceRecord?
+    let vhidActive: Bool
     let paired: KnownController?
 
     var displayName: String {

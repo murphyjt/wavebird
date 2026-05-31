@@ -213,6 +213,7 @@ struct ContentView: View {
                     LiveControllerRow(
                         record: record,
                         paired: entry.paired,
+                        isVHIDActive: entry.vhidActive,
                         displayNameOverride: isPairLeft ? coordinator.listDisplayName(for: entry) : nil,
                         vhidActiveOverride: isPairLeft ? coordinator.joyConPairVHIDActive : nil,
                         optionHeld: optionHeld,

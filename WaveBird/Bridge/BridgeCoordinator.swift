@@ -227,13 +227,18 @@ final class BridgeCoordinator {
                 ?? knownControllers.values.first { $0.peripheralUUID == record.id.raw }
             if let p = paired { claimedSerials.insert(p.serial) }
             let id = paired?.serial ?? record.serial ?? record.id.raw.uuidString
-            entries.append(ListEntry(id: id, live: record, paired: paired))
+            // Strip the live per-connection objects so the view layer can't pin
+            // the VirtualHIDDevice (and thus the CoreHID system device) alive.
+            var viewRecord = record
+            viewRecord.virtualHID = nil
+            viewRecord.session = nil
+            entries.append(ListEntry(id: id, live: viewRecord, vhidActive: record.virtualHID != nil, paired: paired))
         }
         let offline = knownControllers.values
             .filter { !claimedSerials.contains($0.serial) }
             .sorted { $0.lastSeenAt > $1.lastSeenAt }
         for paired in offline {
-            entries.append(ListEntry(id: paired.serial, live: nil, paired: paired))
+            entries.append(ListEntry(id: paired.serial, live: nil, vhidActive: false, paired: paired))
         }
         return entries
     }
