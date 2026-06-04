@@ -145,6 +145,22 @@ final class BridgeCoordinator {
         axisSettings(forSerial: joyConPairSerial() ?? "joycon-pair")
     }
 
+    // Per-controller Xbox advanced options (GIP 0x20 stream on/off). Same
+    // per-serial model; only the Xbox output mode reads it, sampled off-main by
+    // the dispatch task so a live toggle applies without a republish.
+    var xboxOutputSettingsBySerial: [String: XboxOutputSettings] = [:]
+
+    func xboxOutputSettings(for record: DeviceRecord) -> XboxOutputSettings {
+        xboxOutputSettings(forSerial: settingsKey(for: record))
+    }
+
+    func xboxOutputSettings(forSerial serial: String) -> XboxOutputSettings {
+        if let existing = xboxOutputSettingsBySerial[serial] { return existing }
+        let made = XboxOutputSettings(serial: serial)
+        xboxOutputSettingsBySerial[serial] = made
+        return made
+    }
+
     // Settings key for a live record: its serial, or a PID-derived placeholder
     // when the serial flash read hasn't landed (degenerate — settings for an
     // un-serialized controller don't meaningfully persist, but the accessor

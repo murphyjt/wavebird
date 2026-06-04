@@ -19,6 +19,10 @@ extension BridgeCoordinator {
         let profile = record.profile
         let calibration = record.calibration
         let axis = axisSettings(for: record)
+        // Only the Xbox mode emits gated secondaries (the GIP 0x20 stream). Scope
+        // the toggle to that mode by serial so it can't suppress another mode's
+        // secondaries (e.g. passthrough's forwarded reports) for the same controller.
+        let xboxGIP = (record.activeOutputModeID == "xboxSeries") ? xboxOutputSettings(for: record) : nil
         let kind = id.transport
         let (stream, continuation) = AsyncStream.makeStream(of: RawReport.self, bufferingPolicy: .bufferingNewest(1))
         stateContinuations[id] = continuation
@@ -32,10 +36,22 @@ extension BridgeCoordinator {
                 guard let parsed else { continue }
                 let inv = axis.snapshot()
                 let state = parsed.invertingY(left: inv.invertLeftY, right: inv.invertRightY)
-                let report = await session.buildReport(state)
+                let gipSnap = xboxGIP?.snapshot()
+                // Mask the Guide bit from report 0x01 when "Send Guide to macOS"
+                // is off. Only the primary report is masked; the GIP 0x07 path
+                // uses the unmasked state and its own toggle.
+                var primaryState = state
+                if gipSnap?.sendGuideToSystem == false { primaryState.buttons.remove(.home) }
+                let report = await session.buildReport(primaryState)
                 try? await vhid.dispatch(report)
+                // Skip secondaries entirely when the Xbox GIP stream is toggled
+                // off; for every other mode xboxGIP is nil → secondaries always run.
+                guard gipSnap?.sendGIPReports ?? true else { continue }
                 let secondaries = await session.buildSecondaryReports(state)
                 for secondary in secondaries {
+                    // The Guide virtual-key (0x07) is gated independently of the
+                    // 0x20 input stream.
+                    if secondary.first == 0x07, gipSnap?.sendGuideToSDL == false { continue }
                     try? await vhid.dispatch(secondary)
                 }
             }

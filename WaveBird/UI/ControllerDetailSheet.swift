@@ -52,6 +52,9 @@ struct ControllerDetailSheet: View {
         let axis = isPair
             ? coordinator.pairAxisSettings()
             : serial.map { coordinator.axisSettings(forSerial: $0) }
+        // Xbox advanced options (GIP 0x20 stream). Solo only — the GIP path
+        // doesn't serve a merged Joy-Con pair.
+        let xboxSettings = isPair ? nil : serial.map { coordinator.xboxOutputSettings(forSerial: $0) }
         let displayName = isPair
             ? "Joy-Con 2 Pair"
             : (paired?.displayName ?? live?.profile.name ?? "Controller")
@@ -76,7 +79,7 @@ struct ControllerDetailSheet: View {
             Group {
                 switch selectedTab {
                 case .general:
-                    generalTab(live: live, paired: paired, axis: axis)
+                    generalTab(live: live, paired: paired, axis: axis, xbox: xboxSettings)
                 case .haptics:
                     hapticsTab(live: live, settings: settings, isReady: isReady)
                 case .about:
@@ -139,7 +142,7 @@ struct ControllerDetailSheet: View {
     }
 
     @ViewBuilder
-    private func generalTab(live: DeviceRecord?, paired: KnownController?, axis: AxisSettings?) -> some View {
+    private func generalTab(live: DeviceRecord?, paired: KnownController?, axis: AxisSettings?, xbox: XboxOutputSettings?) -> some View {
         let binding = presentAsBinding(live: live, paired: paired)
         Form {
             Section {
@@ -158,6 +161,10 @@ struct ControllerDetailSheet: View {
 
             if let axis {
                 StickSettingsSection(settings: axis)
+            }
+
+            if let xbox, binding.wrappedValue == "xboxSeries" {
+                XboxAdvancedSection(settings: xbox)
             }
         }
         .formStyle(.grouped)
@@ -362,6 +369,38 @@ private struct StickSettingsSection: View {
         Section("Sticks") {
             Toggle("Invert Left Stick Y-Axis", isOn: $settings.invertLeftY)
             Toggle("Invert Right Stick Y-Axis", isOn: $settings.invertRightY)
+        }
+    }
+}
+
+// Xbox-only advanced options. Bound to the per-serial XboxOutputSettings so the
+// toggle takes effect live on the running dispatch task and persists.
+private struct XboxAdvancedSection: View {
+    @Bindable var settings: XboxOutputSettings
+
+    var body: some View {
+        Section {
+            Toggle("Send Home Button", isOn: $settings.sendGuideToSystem)
+        } header: {
+            Text("macOS")
+        } footer: {
+            Text("Lets the Home button open macOS shortcuts like Steam and the game overlay. Turn it off to stop them.")
+        }
+
+        Section {
+            Toggle("Direct Controller Access", isOn: $settings.sendGIPReports)
+            // Reads off while Direct Controller Access is off (the Home button
+            // can't reach direct-access apps without it) but keeps the stored
+            // preference, so it restores when access is turned back on.
+            Toggle("Send Home Button", isOn: Binding(
+                get: { settings.sendGIPReports && settings.sendGuideToSDL },
+                set: { settings.sendGuideToSDL = $0 }
+            ))
+            .disabled(!settings.sendGIPReports)
+        } header: {
+            Text("Advanced")
+        } footer: {
+            Text("Some games and emulators read controllers directly instead of through macOS. Direct Controller Access lets them detect this controller; Send Home Button passes its Home button through to them. Steam, browsers, and most apps don’t need this.")
         }
     }
 }
