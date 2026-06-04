@@ -40,7 +40,7 @@ controller card and use the "Use profile" picker on the General tab to switch:
 | **Switch Pro Controller** | ✅ | ✅ | Recommended |
 | **DualShock 4** | ✅ | ❌ | |
 | **DualSense** | ✅ | ❌ | |
-| **Xbox Wireless Controller** | ✅ | — | Recommended; missing Home button |
+| **Xbox Wireless Controller** | ✅ | — | Recommended |
 
 The selection persists per-controller (by serial) across reconnects, and can
 be changed while the controller is offline.

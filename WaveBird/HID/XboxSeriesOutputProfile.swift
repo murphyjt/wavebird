@@ -3,33 +3,28 @@ import Foundation
 
 // Microsoft Xbox Wireless Controller, VID 0x045E / PID 0x0B13 (BLE Series X).
 //
-// PID 0x0B13 is the BLE Series X PID. Apple's XboxOneHIDServicePlugin takes
-// the BLE code path for this PID — no GIP handshake required — and creates
-// a GCController immediately. (USB PIDs like 0x0B12 trigger GIP init, which
-// blocks until the virtual device responds with a GIP status packet.)
+// The descriptor below is byte-for-byte the report descriptor dumped from a real
+// Series X over BLE (IOKit kIOHIDReportDescriptorKey, 2026-05-31): one input
+// report (0x01) and one PID rumble output report (0x03). Apple's
+// XboxOneHIDServicePlugin binds it as a GCController immediately (no GIP
+// handshake). Full architecture + the dumped descriptor: see Xbox.md.
 //
-// SDL on macOS reads the GCController via its MFI backend. Apple re-presents
-// our virtual device through the GCController layer as BLE 0x0B13 regardless
-// of what transport we set on the HIDVirtualDevice, so Steam and SDL both see
-// it as a Bluetooth Xbox Series X.
+// SDL/Steam on the GIP (USB) route is intentionally NOT served here right now —
+// this profile targets faithful BLE/GameController behaviour. The earlier GIP
+// reports (0x20 input, 0x07 virtual-key) live in git history if revived.
 //
-// Y-axis: SDL's MFI code multiplies GCController.yAxis.value by -32767 to
-// convert GCController convention (+1=up) to SDL joystick convention (-=up).
-// Apple's virtual-device HID layer maps our raw Y axis directly (high value →
-// +1 in GCController) without the extra inversion it applies to real BLE
-// hardware. We do NOT invert Y; we send high values for physical up.
-//
-// Report 0x01 (16 bytes including ID):
-//   0:     Report ID (0x01)
-//   1..2:  LX low/high (UInt16 LE, 0..65535)
-//   3..4:  LY  — high = stick up (game convention; MFI inverts for SDL)
-//   5..6:  RX
-//   7..8:  RY  — same convention as LY
-//   9..10: LT, 10-bit LE in bits 0..9; bits 10..15 padding
-//   11..12: RT, 10-bit LE in bits 0..9; bits 10..15 padding
-//   13:    low nibble hat (1=N, 2=NE, ... 8=NW, 0=neutral), high nibble padding
-//   14:    A=0, B=1, X=2, Y=3, LB=4, RB=5, View=6, Menu=7
-//   15:    L3=0, R3=1, bits 2..7 padding
+// Report 0x01 (17 bytes including ID) — real Series X layout:
+//   0:      Report ID (0x01)
+//   1..2:   LX  (UInt16 LE, 0..65535)
+//   3..4:   LY  (high = up; Apple maps high → +1)
+//   5..6:   Z   = right stick X
+//   7..8:   Rz  = right stick Y (high = up)
+//   9..10:  Brake = LT, 10-bit LE in bits 0..9; bits 10..15 padding
+//   11..12: Accelerator = RT, 10-bit LE; bits 10..15 padding
+//   13:     hat low nibble (1=N, 2=NE, … 8=NW, 0=neutral), high nibble padding
+//   14:     buttons 1..8 — A=bit0 B=bit1 (bit2 rsvd) X=bit3 Y=bit4 (bit5 rsvd) LB=bit6 RB=bit7
+//   15:     buttons 9..15 — (bits0,1 rsvd) View=bit2 Menu=bit3 Guide=bit4 L3=bit5 R3=bit6, bit7 pad
+//   16:     Share/Capture (Consumer Record 0x0B2) bit 0, bits 1..7 padding
 struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
     let vendorID: UInt16 = 0x045E
     let productID: UInt16 = 0x0B13
@@ -46,34 +41,35 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
     // alive between host frames.
     var refreshInterval: Duration? { .milliseconds(80) }
 
+    // Verbatim real Series X BLE report descriptor (283 bytes).
     static let descriptorBytes: Data = Data([
-        0x05, 0x01,
-        0x09, 0x05,
-        0xA1, 0x01,
-        0x85, 0x01,
+        0x05, 0x01,             // Usage Page (Generic Desktop)
+        0x09, 0x05,             // Usage (Game Pad)
+        0xA1, 0x01,             // Collection (Application)
+        0x85, 0x01,             //   Report ID (1)
 
-        0x09, 0x01,
-        0xA1, 0x00,
-        0x09, 0x30, 0x09, 0x31,
+        0x09, 0x01,             //   Usage (Pointer)
+        0xA1, 0x00,             //   Collection (Physical)
+        0x09, 0x30, 0x09, 0x31, //     Usage (X), Usage (Y)
         0x15, 0x00,
         0x27, 0xFF, 0xFF, 0x00, 0x00,
         0x95, 0x02,
         0x75, 0x10,
         0x81, 0x02,
-        0xC0,
+        0xC0,                   //   End Collection
 
-        0x09, 0x01,
-        0xA1, 0x00,
-        0x09, 0x33, 0x09, 0x34,
+        0x09, 0x01,             //   Usage (Pointer)
+        0xA1, 0x00,             //   Collection (Physical)
+        0x09, 0x32, 0x09, 0x35, //     Usage (Z), Usage (Rz) — right stick
         0x15, 0x00,
         0x27, 0xFF, 0xFF, 0x00, 0x00,
         0x95, 0x02,
         0x75, 0x10,
         0x81, 0x02,
-        0xC0,
+        0xC0,                   //   End Collection
 
-        0x05, 0x01,
-        0x09, 0x32,
+        0x05, 0x02,             //   Usage Page (Simulation Controls)
+        0x09, 0xC5,             //   Usage (Brake) — LT
         0x15, 0x00,
         0x26, 0xFF, 0x03,
         0x95, 0x01,
@@ -85,8 +81,8 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         0x95, 0x01,
         0x81, 0x03,
 
-        0x05, 0x01,
-        0x09, 0x35,
+        0x05, 0x02,             //   Usage Page (Simulation Controls)
+        0x09, 0xC4,             //   Usage (Accelerator) — RT
         0x15, 0x00,
         0x26, 0xFF, 0x03,
         0x95, 0x01,
@@ -98,8 +94,8 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         0x95, 0x01,
         0x81, 0x03,
 
-        0x05, 0x01,
-        0x09, 0x39,
+        0x05, 0x01,             //   Usage Page (Generic Desktop)
+        0x09, 0x39,             //   Usage (Hat switch)
         0x15, 0x01,
         0x25, 0x08,
         0x35, 0x00,
@@ -117,25 +113,22 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         0x65, 0x00,
         0x81, 0x03,
 
-        0x05, 0x09,
-        0x19, 0x01,
-        0x29, 0x0A,
+        0x05, 0x09,             //   Usage Page (Button)
+        0x19, 0x01,             //   Usage Minimum (1)
+        0x29, 0x0F,             //   Usage Maximum (15)
         0x15, 0x00,
         0x25, 0x01,
         0x75, 0x01,
-        0x95, 0x0A,
+        0x95, 0x0F,
         0x81, 0x02,
         0x15, 0x00,
         0x25, 0x00,
-        0x75, 0x06,
+        0x75, 0x01,
         0x95, 0x01,
         0x81, 0x03,
 
-        0x05, 0x01,
-        0x09, 0x80,
-        0x85, 0x02,
-        0xA1, 0x00,
-        0x09, 0x85,
+        0x05, 0x0C,             //   Usage Page (Consumer)
+        0x0A, 0xB2, 0x00,       //   Usage (Record, 0x0B2) — Share
         0x15, 0x00,
         0x25, 0x01,
         0x95, 0x01,
@@ -146,11 +139,10 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         0x75, 0x07,
         0x95, 0x01,
         0x81, 0x03,
-        0xC0,
 
-        0x05, 0x0F,
+        0x05, 0x0F,             //   Usage Page (PID)
         0x09, 0x21,
-        0x85, 0x03,
+        0x85, 0x03,             //   Report ID (3) — rumble output
         0xA1, 0x02,
         0x09, 0x97,
         0x15, 0x00,
@@ -191,43 +183,25 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
         0x75, 0x08,
         0x95, 0x01,
         0x91, 0x02,
-        0xC0,
-
-        0x85, 0x04,
-        0x05, 0x06,
-        0x09, 0x20,
-        0x15, 0x00,
-        0x26, 0xFF, 0x00,
-        0x75, 0x08,
-        0x95, 0x01,
-        0x81, 0x02,
-
-        // Raw vendor input for SDL's GIP code path (report ID 0x20 = GIP_CMD_INPUT).
-        // SDL HIDAPI Xbox uses the GIP path when transport != BLE; this report carries
-        // the GIP-framed state so SDL can parse it as a standard Xbox input packet.
-        0x85, 0x20,       // Report ID (0x20)
-        0x06, 0x00, 0xFF, // Usage Page (Vendor 0xFF00)
-        0x09, 0x20,       // Usage (0x20)
-        0x75, 0x08,       // Report Size (8)
-        0x95, 0x12,       // Report Count (18) = opts(1)+seq(1)+len(1)+state(15)
-        0x81, 0x02,       // Input (Data, Var, Abs)
-
-        0xC0,
+        0xC0,                   //   End Collection
+        0xC0,                   // End Collection
     ])
 
-    // Two rumble paths reach this spoof depending on who's driving:
+    // Two rumble paths reach this spoof:
     //
     // • Report 0x03 — macOS GCController.haptics drives the PID (Physical
-    //   Interface) descriptor block in our descriptor:
+    //   Interface) block declared in the descriptor:
     //     [id, enable(4-bit actuator mask), LT, RT, L, R, duration, delay, loop]
     //
-    // • Report 0x09 — SDL's Xbox HIDAPI driver (matches Xbox GIP rumble):
+    // • Report 0x09 — SDL's Xbox HIDAPI driver (Steam, Dolphin, …) sends GIP
+    //   rumble. The faithful BLE descriptor does NOT declare 0x09, but CoreHID
+    //   delivers the Set Report to us anyway (confirmed on hardware), so we just
+    //   parse it — no descriptor change needed:
     //     [id, 0x00, 0x00, 0x09, 0x00, 0x0F, LT, RT, L, R, duration, delay, loop]
     //
-    // Both paths send magnitudes as 0..100 percent (Xbox GIP convention);
-    // rescale to 0..65535 so the NS2 LRA encoder reaches full amplitude.
-    // NS2 Pro has no trigger motors, so fold trigger magnitudes into the
-    // main motor with max(trigger, motor).
+    // Both send magnitudes as 0..100 percent (Xbox GIP convention); rescale to
+    // 0..65535 so the NS2 LRA encoder reaches full amplitude. NS2 Pro has no
+    // trigger motors, so fold trigger magnitudes into the main motor with max().
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? {
         guard type == .output else { return nil }
         let b = data.startIndex
@@ -254,25 +228,24 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
     func buildReport(_ state: ControllerState) async -> Data {
         let s = state.buttons
         let sh = state.shoulders
-        var bytes = [UInt8](repeating: 0, count: 16)
+        var bytes = [UInt8](repeating: 0, count: 17)
         bytes[0] = 0x01  // Report ID
 
         // Centered 12-bit (-2047..2047) → unsigned 16-bit, neutral 0x8000.
         // `<< 4` widens 12-bit to ~16-bit (2047 → 0xFFF0, -2047 → 0x0010).
-        func axis16(_ v: Int16, invert: Bool = false) -> UInt16 {
-            let value = invert ? -Int(v) : Int(v)
-            return UInt16(clamping: 0x8000 + (value << 4))
+        func axis16(_ v: Int16) -> UInt16 {
+            UInt16(clamping: 0x8000 + (Int(v) << 4))
         }
         let lx = axis16(state.leftStick.x)
         let ly = axis16(state.leftStick.y)
-        let rx = axis16(state.rightStick.x)
-        let ry = axis16(state.rightStick.y)
+        let rx = axis16(state.rightStick.x)   // → Z
+        let ry = axis16(state.rightStick.y)   // → Rz
         bytes[1] = UInt8(lx & 0xFF); bytes[2] = UInt8(lx >> 8)
         bytes[3] = UInt8(ly & 0xFF); bytes[4] = UInt8(ly >> 8)
         bytes[5] = UInt8(rx & 0xFF); bytes[6] = UInt8(rx >> 8)
         bytes[7] = UInt8(ry & 0xFF); bytes[8] = UInt8(ry >> 8)
 
-        // Triggers are 10-bit fields, each followed by 6 bits of padding.
+        // Brake (LT) / Accelerator (RT): 10-bit fields, each + 6 bits padding.
         let lt = UInt16(UInt32(sh.leftTriggerAnalog) * 1023 / 255)
         let rt = UInt16(UInt32(sh.rightTriggerAnalog) * 1023 / 255)
         bytes[9]  = UInt8(lt & 0xFF); bytes[10] = UInt8(lt >> 8)
@@ -286,94 +259,28 @@ struct XboxSeriesOutput: HIDOutputProfile, HIDOutputSession {
             left: s.contains(.dpadLeft)
         ) & 0x0F
 
+        // Buttons 1..8 (byte 14). Bits 2 and 5 are reserved/unused on a real pad.
         var b14: UInt8 = 0
-        if s.contains(.b) { b14 |= 0x01 }  // bit 0 = A (south)
-        if s.contains(.a) { b14 |= 0x02 }  // bit 1 = B (east)
-        if s.contains(.y) { b14 |= 0x04 }  // bit 2 = X (west)
-        if s.contains(.x) { b14 |= 0x08 }  // bit 3 = Y (north)
-        if sh.leftBumper  { b14 |= 0x10 }  // bit 4 = LB
-        if sh.rightBumper { b14 |= 0x20 }  // bit 5 = RB
-        if s.contains(.capture) || s.contains(.minus) { b14 |= 0x40 }  // View
-        if s.contains(.start)   || s.contains(.plus)  { b14 |= 0x80 }  // Menu
+        if s.contains(.b) { b14 |= 0x01 }  // button 1  = A (south)
+        if s.contains(.a) { b14 |= 0x02 }  // button 2  = B (east)
+        if s.contains(.y) { b14 |= 0x08 }  // button 4  = X (west)
+        if s.contains(.x) { b14 |= 0x10 }  // button 5  = Y (north)
+        if sh.leftBumper  { b14 |= 0x40 }  // button 7  = LB
+        if sh.rightBumper { b14 |= 0x80 }  // button 8  = RB
         bytes[14] = b14
 
+        // Buttons 9..15 (byte 15). Bits 0,1 reserved; bit 7 is the array pad.
         var b15: UInt8 = 0
-        if s.contains(.stickL) { b15 |= 0x01 }  // L3
-        if s.contains(.stickR) { b15 |= 0x02 }  // R3
+        if s.contains(.minus)                        { b15 |= 0x04 }  // button 11 = View
+        if s.contains(.start) || s.contains(.plus)   { b15 |= 0x08 }  // button 12 = Menu
+        if s.contains(.home)                         { b15 |= 0x10 }  // button 13 = Guide
+        if s.contains(.stickL)                       { b15 |= 0x20 }  // button 14 = L3
+        if s.contains(.stickR)                       { b15 |= 0x40 }  // button 15 = R3
         bytes[15] = b15
+
+        // byte 16: Share/Capture (Consumer Record).
+        if s.contains(.capture) { bytes[16] |= 0x01 }
         return Data(bytes)
-    }
-
-    // SDL HIDAPI Xbox driver uses the GIP code path when transport != BLE. It
-    // dispatches on data[0] = GIP command. Report 0x01 arrives as GIP_CMD_ACKNOWLEDGE
-    // (ignored). This report uses ID 0x20 = GIP_CMD_INPUT so SDL parses it correctly.
-    //
-    // GIP input layout (data[] after SDL_hid_read, report ID included as data[0]):
-    //   [0]=0x20 cmd  [1]=opts  [2]=seq  [3]=len(15)
-    //   [4]=buttons0  [5]=buttons1
-    //   [6-7]=LT UInt16LE 0..1023   [8-9]=RT UInt16LE
-    //   [10-11]=LX Sint16LE (center=0, right=+)
-    //   [12-13]=LY Sint16LE (center=0, down=+; SDL inverts with ~ → negative=up)
-    //   [14-15]=RX  [16-17]=RY  [18]=share(0)
-    //
-    // Y convention: SDL_hidapi_xboxone.c applies `~axis` to Y (invert). To get
-    // the correct direction after that inversion, we send down=positive in the
-    // GIP report (opposite of our internal positive=up convention).
-    //
-    // Share byte at state[14]: SDL reads this for Xbox Series X (has_share_button).
-    // Our state is 15 bytes so [14] is in-bounds and zeroed (share button off).
-    func buildSecondaryReports(_ state: ControllerState) async -> [Data] {
-        let s = state.buttons
-        let sh = state.shoulders
-        var bytes = [UInt8](repeating: 0, count: 19)
-        bytes[0] = 0x20  // report ID = GIP_CMD_INPUT
-        bytes[1] = 0x00  // opts
-        bytes[2] = 0x00  // sequence
-        bytes[3] = 0x0F  // payload length (15)
-
-        var b0: UInt8 = 0
-        if s.contains(.start) || s.contains(.plus)    { b0 |= 0x04 }  // Menu
-        if s.contains(.minus) { b0 |= 0x08 }  // View
-        if s.contains(.b) { b0 |= 0x10 }  // A (south)
-        if s.contains(.a) { b0 |= 0x20 }  // B (east)
-        if s.contains(.y) { b0 |= 0x40 }  // X (west)
-        if s.contains(.x) { b0 |= 0x80 }  // Y (north)
-        bytes[4] = b0
-
-        var b1: UInt8 = 0
-        if s.contains(.dpadUp)    { b1 |= 0x01 }
-        if s.contains(.dpadDown)  { b1 |= 0x02 }
-        if s.contains(.dpadLeft)  { b1 |= 0x04 }
-        if s.contains(.dpadRight) { b1 |= 0x08 }
-        if sh.leftBumper           { b1 |= 0x10 }
-        if sh.rightBumper          { b1 |= 0x20 }
-        if s.contains(.stickL)    { b1 |= 0x40 }
-        if s.contains(.stickR)    { b1 |= 0x80 }
-        bytes[5] = b1
-
-        let lt = UInt16(UInt32(sh.leftTriggerAnalog) * 1023 / 255)
-        let rt = UInt16(UInt32(sh.rightTriggerAnalog) * 1023 / 255)
-        bytes[6] = UInt8(lt & 0xFF); bytes[7] = UInt8(lt >> 8)
-        bytes[8] = UInt8(rt & 0xFF); bytes[9] = UInt8(rt >> 8)
-
-        // Sint16 LE centered at 0. SDL's HandleStatePacket applies `~axis` to Y
-        // axes, so we negate Y here: physical up (internal +) → GIP negative →
-        // after ~ → positive... wait the SDL path is: we send down=+, SDL does
-        // ~(+) = negative which it treats as "up". Send positive=down for Y.
-        // Centered 12-bit → signed 16-bit, neutral 0. `<< 4` widens to ~16-bit.
-        func gipAxis(_ value: Int) -> UInt16 {
-            UInt16(bitPattern: Int16(clamping: value << 4))
-        }
-        let lx = gipAxis(Int(state.leftStick.x))
-        let ly = gipAxis(-Int(state.leftStick.y))   // negate: send down=+ so SDL ~ gives up=-
-        let rx = gipAxis(Int(state.rightStick.x))
-        let ry = gipAxis(-Int(state.rightStick.y))
-        bytes[10] = UInt8(lx & 0xFF); bytes[11] = UInt8(lx >> 8)
-        bytes[12] = UInt8(ly & 0xFF); bytes[13] = UInt8(ly >> 8)
-        bytes[14] = UInt8(rx & 0xFF); bytes[15] = UInt8(rx >> 8)
-        bytes[16] = UInt8(ry & 0xFF); bytes[17] = UInt8(ry >> 8)
-        if s.contains(.capture) { bytes[18] |= 0x01 }  // Share
-        return [Data(bytes)]
     }
 
     private func xboxHat(up: Bool, right: Bool, down: Bool, left: Bool) -> UInt8 {
