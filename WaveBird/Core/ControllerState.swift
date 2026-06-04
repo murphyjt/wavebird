@@ -85,3 +85,24 @@ struct ControllerState: Sendable {
     // clamp is belt-and-suspenders against an out-of-range axis.
     private static func negate(_ v: Int16) -> Int16 { Int16(clamping: -Int(v)) }
 }
+
+// Coarse fingerprint of meaningful input, used by the idle-disconnect sweep.
+// An NS2 controller streams report 0x05 forever whether or not it's touched, so
+// idleness can't watch report arrival — it watches this signature for change.
+struct InputSignature: Hashable, Sendable {
+    let buttons: UInt32
+    let lx: Int16; let ly: Int16; let rx: Int16; let ry: Int16
+    let tl: UInt8; let tr: UInt8
+}
+
+extension ControllerState {
+    // >>8 quantizes the centered ~-2047...2047 sticks into ~16 buckets (±128
+    // deadzone) so at-rest analog noise reads as unchanging; triggers >>4. IMU
+    // is intentionally excluded — gyro/accel noise never settles.
+    var idleSignature: InputSignature {
+        InputSignature(buttons: buttons.rawValue,
+                       lx: leftStick.x >> 8, ly: leftStick.y >> 8,
+                       rx: rightStick.x >> 8, ry: rightStick.y >> 8,
+                       tl: triggerL >> 4, tr: triggerR >> 4)
+    }
+}

@@ -24,9 +24,11 @@ extension BridgeCoordinator {
         // secondaries (e.g. passthrough's forwarded reports) for the same controller.
         let xboxGIP = (record.activeOutputModeID == "xboxSeries") ? xboxOutputSettings(for: record) : nil
         let kind = id.transport
+        let tracker = activityTracker
         let (stream, continuation) = AsyncStream.makeStream(of: RawReport.self, bufferingPolicy: .bufferingNewest(1))
         stateContinuations[id] = continuation
         dispatchTasks[id] = Task.detached(priority: .userInitiated) {
+            var lastSig: InputSignature?
             for await raw in stream {
                 let parsed: ControllerState?
                 switch kind {
@@ -36,6 +38,9 @@ extension BridgeCoordinator {
                 guard let parsed else { continue }
                 let inv = axis.snapshot()
                 let state = parsed.invertingY(left: inv.invertLeftY, right: inv.invertRightY)
+                // Idle tracking: only a changed input fingerprint counts as activity.
+                let sig = state.idleSignature
+                if sig != lastSig { lastSig = sig; tracker.touch(id, at: .now) }
                 let gipSnap = xboxGIP?.snapshot()
                 // Mask the Guide bit from report 0x01 when "Send Guide to macOS"
                 // is off. Only the primary report is masked; the GIP 0x07 path
@@ -75,6 +80,7 @@ extension BridgeCoordinator {
         let (stream, continuation) = AsyncStream.makeStream(of: RawReport.self, bufferingPolicy: .bufferingNewest(1))
         stateContinuations[id] = continuation
         dispatchTasks[id] = Task { @MainActor [weak self] in
+            var lastSig: InputSignature?
             for await raw in stream {
                 guard let self, let pair = self.joyConPair, pair.includes(id),
                       let vhid = pair.virtualHID, let session = pair.session else { continue }
@@ -87,6 +93,10 @@ extension BridgeCoordinator {
                 if pair.leftID == id { pair.leftState = state }
                 else if pair.rightID == id { pair.rightState = state }
                 let merged = JoyConPairProfile.merge(left: pair.leftState, right: pair.rightState)
+                // Either side's input refreshes this side's timestamp (both sides
+                // see the same merged state), so the pair idles as one.
+                let sig = merged.idleSignature
+                if sig != lastSig { lastSig = sig; self.activityTracker.touch(id, at: .now) }
                 let inv = axis.snapshot()
                 let report = await session.buildReport(merged.invertingY(left: inv.invertLeftY, right: inv.invertRightY))
                 try? await vhid.dispatch(report)
@@ -133,6 +143,9 @@ extension BridgeCoordinator {
         case .ready(let id):
             devices[id]?.connectionState = .ready
             cancelConnectingTimeout(id)
+            // Seed activity so the idle sweep doesn't drop a freshly-connected
+            // controller before it sends any input.
+            activityTracker.seed(id)
             guard let record = devices[id] else { return }
             // Joy-Cons take a separate path: solo Joy-Con play promotes via
             // handleJoyConReady. LTK pairing for each Joy-Con is deferred
@@ -224,6 +237,7 @@ extension BridgeCoordinator {
             dispatchTasks[id] = nil
             stateContinuations[id]?.finish()
             stateContinuations[id] = nil
+            activityTracker.remove(id)
             rumbleRefreshBoxes[id]?.cancel()
             rumbleRefreshBoxes[id] = nil
             testRumbleTasks[id]?.cancel()

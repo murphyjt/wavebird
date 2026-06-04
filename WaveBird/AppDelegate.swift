@@ -33,6 +33,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                        name: UserDefaults.didChangeNotification,
                        object: nil)
 
+        // Sleep/wake post to the workspace's own center, not NotificationCenter.default.
+        let wsnc = NSWorkspace.shared.notificationCenter
+        wsnc.addObserver(self,
+                         selector: #selector(handleWillSleep(_:)),
+                         name: NSWorkspace.willSleepNotification,
+                         object: nil)
+        wsnc.addObserver(self,
+                         selector: #selector(handleDidWake(_:)),
+                         name: NSWorkspace.didWakeNotification,
+                         object: nil)
+
         // Drive start + auto-scan from the delegate so it runs even when the
         // app launches into .accessory mode without the main window.
         Task { @MainActor in
@@ -62,6 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func defaultsDidChange(_ n: Notification) {
         reevaluateActivationPolicy()
+    }
+
+    @objc private func handleWillSleep(_ n: Notification) {
+        Task { @MainActor in await coordinator.prepareForSleep() }
+    }
+
+    @objc private func handleDidWake(_ n: Notification) {
+        Task { @MainActor in await coordinator.resumeAfterWake() }
     }
 
     private func reevaluateActivationPolicy() {

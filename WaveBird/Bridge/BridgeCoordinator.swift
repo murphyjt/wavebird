@@ -99,6 +99,13 @@ final class BridgeCoordinator {
     var connectingTimeoutTasks: [DeviceID: Task<Void, Never>] = [:]
     static let connectingTimeout: Duration = .seconds(10)
 
+    // Tracks per-device last meaningful input for the idle-disconnect sweep.
+    // Fed from the dispatch tasks; read by runIdleSweep. See +Power.swift.
+    let activityTracker = ActivityTracker()
+
+    @ObservationIgnored
+    var idleSweepTask: Task<Void, Never>?
+
     // Per-controller tunable rumble settings, keyed by NS2 serial. Created on
     // first access, reused, persisted to UserDefaults by serial so each physical
     // controller carries its own tuning across re-pairings. The encoder reads via
@@ -329,6 +336,7 @@ final class BridgeCoordinator {
 
     deinit {
         consumerTask?.cancel()
+        idleSweepTask?.cancel()
         for task in dispatchTasks.values { task.cancel() }
         for cont in stateContinuations.values { cont.finish() }
         for box in rumbleRefreshBoxes.values { box.cancel() }
@@ -354,22 +362,35 @@ final class BridgeCoordinator {
                 }
             }
         }
+        idleSweepTask = Task { [weak self] in await self?.runIdleSweep() }
     }
 
     func toggleScan() async {
-        let allMatchers: [TransportMatcher] = profiles.flatMap { p -> [TransportMatcher] in
+        if isScanning { await stopScanning() } else { await startScanning() }
+    }
+
+    // Every profile's matchers, flattened across transports. Used by every path
+    // that (re)starts discovery — toggleScan, resumeAfterWake.
+    func allScanMatchers() -> [TransportMatcher] {
+        profiles.flatMap { p -> [TransportMatcher] in
             var ms: [TransportMatcher] = []
             if let bm = p.bleMatcher { ms.append(.ble(bm)) }
             if let um = p.usbMatcher { ms.append(.usb(um)) }
             return ms
         }
-        if isScanning {
-            for t in transports { await t.stopDiscovery() }
-            isScanning = false
-        } else {
-            for t in transports { await t.startDiscovery(matchers: allMatchers) }
-            isScanning = true
-        }
+    }
+
+    func startScanning() async {
+        guard !isScanning else { return }
+        let allMatchers = allScanMatchers()
+        for t in transports { await t.startDiscovery(matchers: allMatchers) }
+        isScanning = true
+    }
+
+    func stopScanning() async {
+        guard isScanning else { return }
+        for t in transports { await t.stopDiscovery() }
+        isScanning = false
     }
 
     func transport(for kind: TransportKind) -> (any Transport)? {

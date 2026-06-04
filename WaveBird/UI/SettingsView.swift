@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Bindable var launch: LaunchAtLoginService
     @AppStorage("WaveBird.hideDockIcon") private var hideDockIcon = false
     @AppStorage("WaveBird.openInBackground") private var openInBackground = false
+    @AppStorage("WaveBird.idleDisconnectMinutes") private var idleDisconnectMinutes = 10
 
     var body: some View {
         TabView {
@@ -33,10 +34,18 @@ struct SettingsView: View {
                         }
                     }
                 }
+                Section {
+                    Picker("Disconnect idle controller after", selection: $idleDisconnectMinutes) {
+                        Text("Never").tag(0)
+                        Text("5 minutes").tag(5)
+                        Text("10 minutes").tag(10)
+                        Text("15 minutes").tag(15)
+                    }
+                }
             }
             .formStyle(.grouped)
             .tabItem { Label("General", systemImage: "gear") }
         }
-        .frame(width: 420, height: 224)
+        .frame(width: 420, height: 280)
     }
 }
