@@ -227,22 +227,14 @@ jobs:
         run: |
           PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n1 || true)
           {
-            echo "## Install"
+            cat changelog.md
             echo
-            echo "1. Download \`WaveBird-${VERSION}.dmg\` below."
-            echo "2. Open the DMG and drag \`WaveBird.app\` to \`/Applications\`."
-            echo
-            echo "Signed and notarized by Apple — no Gatekeeper warning."
-            echo
-            echo "## Provenance"
-            echo
-            echo "Verify the build provenance with the GitHub CLI:"
+            echo "<details><summary>Verify this build's provenance</summary>"
             echo
             echo '```sh'
             echo "gh attestation verify --repo ${REPO} WaveBird-${VERSION}.dmg"
             echo '```'
-            echo
-            cat changelog.md
+            echo "</details>"
             if [[ -n "$PREV_TAG" ]]; then
               echo
               echo "**Full Changelog**: https://github.com/${REPO}/compare/${PREV_TAG}...${TAG}"

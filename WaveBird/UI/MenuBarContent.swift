@@ -51,7 +51,8 @@ struct MenuBarContent: View {
             NSApp.activate(ignoringOtherApps: true)
             openSettings()
         }
-        Button("Quit WaveBird") { NSApp.terminate(nil) }
+        Button("Check for Updates…") { UpdateChecker.check(userInitiated: true) }
+        Button("Quit") { NSApp.terminate(nil) }
     }
 
     private func openMainWindow() {

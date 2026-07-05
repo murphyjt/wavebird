@@ -52,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await coordinator.toggleScan()
             }
         }
+
+        // Silent: only surfaces if a newer GitHub release exists.
+        UpdateChecker.startBackgroundChecks()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

@@ -30,6 +30,25 @@ Early. Currently supports:
 
 Not yet supported: Charging Grip and USB connections.
 
+## Install
+
+1. Download the latest `WaveBird-<version>.dmg` from the
+   [Releases page](https://github.com/murphyjt/wavebird/releases/latest).
+2. Open the DMG and drag **WaveBird.app** to **Applications**.
+
+The app is signed and notarized by Apple, so it launches without a Gatekeeper
+warning. You can also check for updates from within the app
+(*WaveBird → Check for Updates…*).
+
+### Verifying the download
+
+Each release DMG carries a SLSA build-provenance attestation. To verify it was
+built by this repo's release workflow before installing:
+
+```sh
+gh attestation verify --repo murphyjt/wavebird WaveBird-<version>.dmg
+```
+
 ## Output profiles
 
 Each connected controller can present as a different virtual gamepad. Open the
