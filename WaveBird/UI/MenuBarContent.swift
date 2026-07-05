@@ -16,6 +16,15 @@ struct MenuBarContent: View {
             Divider()
         }
 
+        if coordinator.hidAccessIssue != nil {
+            Button {
+                openAccessibilitySettings()
+            } label: {
+                Label("Accessibility Permission Needed…", systemImage: "exclamationmark.triangle.fill")
+            }
+            Divider()
+        }
+
         let connected = coordinator.listEntries.filter {
             $0.live?.connectionState == .ready
         }
