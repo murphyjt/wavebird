@@ -20,6 +20,9 @@ struct ContentView: View {
             if let reason = coordinator.transportUnavailableReason {
                 transportBanner(reason)
             }
+            if let issue = coordinator.hidAccessIssue {
+                HIDAccessBanner(issue: issue)
+            }
             if coordinator.listEntries.isEmpty {
                 emptyState
             } else {

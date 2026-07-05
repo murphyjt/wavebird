@@ -14,6 +14,25 @@ final class BridgeCoordinator {
     /// Non-nil when a transport is unavailable (e.g. Bluetooth is off).
     /// Cleared when the transport becomes available again.
     var transportUnavailableReason: String?
+    /// Non-nil when virtual-controller output is blocked. Drives the
+    /// permission banner in the main window and menu bar. Set and cleared
+    /// only by observed VHID creation outcomes in makeVirtualHID — the TCC
+    /// post-event check is NOT trusted as a standalone signal (it reports
+    /// not-granted on machines where the Accessibility box is ticked and
+    /// the VHID works fine); it only refines the failure message.
+    var hidAccessIssue: HIDAccessIssue?
+
+    // Per-peripheral auto-connect suppression after a VHID creation failure,
+    // set by failVirtualHID and checked in the .discovered handler. Without
+    // it the forced disconnect + re-advertisement reconnects in a tight loop.
+    // Cleared wholesale when the app comes forward (the user granting the
+    // permission necessarily foregrounds System Settings and then us).
+    @ObservationIgnored
+    var vhidFailureCooldowns: [DeviceID: ContinuousClock.Instant] = [:]
+
+    func clearVHIDFailureCooldowns() {
+        vhidFailureCooldowns.removeAll()
+    }
     var pairingPrompt: PairingPrompt?
     // The device whose ProfilePickerSheet is currently being shown. Updated via
     // advanceAwaitingProfileSelection() — multiple controllers reaching .ready at

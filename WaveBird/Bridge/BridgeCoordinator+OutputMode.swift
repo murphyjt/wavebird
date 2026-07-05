@@ -41,7 +41,9 @@ extension BridgeCoordinator {
             startDispatch(for: id)
             await applySecondaryInputs(for: id, modeID: modeID)
         } else {
-            devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+            await failVirtualHID(for: id)
+            advanceAwaitingProfileSelection()
+            return
         }
         if let updated = devices[id] {
             maybePromptForPairing(record: updated)
@@ -151,7 +153,20 @@ extension BridgeCoordinator {
             transport: hidTransport(for: record),
             onSetReport: onSetReport
         ) else { return nil }
+        hidAccessIssue = nil
         return (vhid, session)
+    }
+
+    // Shared failure path for every VHID creation site. A failed VHID leaves
+    // the BLE link up but useless, and creation is only retried on the next
+    // .ready — so drop the link: after fixing the permission, a button press
+    // reconnects and retries. Also records the issue for the banner (set
+    // here, not in makeVirtualHID, so the pair path is covered too).
+    func failVirtualHID(for id: DeviceID) async {
+        hidAccessIssue = HIDAccessIssue.current()
+        devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+        vhidFailureCooldowns[id] = ContinuousClock.now.advanced(by: .seconds(60))
+        await transport(for: id.transport)?.disconnect(id)
     }
 
     // Always-on diagnostic log for output reports the host sends us.
@@ -258,7 +273,7 @@ extension BridgeCoordinator {
         rumbleRefreshBoxes[id] = nil
         try? await Task.sleep(for: .milliseconds(150))
         guard let (vhid, session) = makeVirtualHID(for: record, modeID: modeID) else {
-            devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+            await failVirtualHID(for: id)
             return
         }
         await vhid.activate()

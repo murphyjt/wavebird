@@ -92,7 +92,7 @@ extension BridgeCoordinator {
                     maybePromptForPairing(record: updated)
                 }
             } else {
-                devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+                await failVirtualHID(for: id)
             }
         } else {
             devices[id]?.awaitingProfileSelection = true
@@ -226,10 +226,11 @@ extension BridgeCoordinator {
             transport: .usb,
             onSetReport: onSetReport
         ) else {
-            devices[pair.leftID]?.connectionState = .failed("Failed to create virtual HID device")
-            devices[pair.rightID]?.connectionState = .failed("Failed to create virtual HID device")
+            await failVirtualHID(for: pair.leftID)
+            await failVirtualHID(for: pair.rightID)
             return
         }
+        hidAccessIssue = nil
         await vhid.activate()
         pair.virtualHID = vhid
         pair.session = session

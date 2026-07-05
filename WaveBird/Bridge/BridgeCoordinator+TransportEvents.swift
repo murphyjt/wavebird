@@ -107,6 +107,15 @@ extension BridgeCoordinator {
     func handle(_ event: TransportEvent, kind: TransportKind) async {
         switch event {
         case .discovered(let id, let info):
+            // A device whose VHID just failed to create re-advertises the
+            // instant failVirtualHID drops the link; auto-connecting again
+            // would fail identically, in a tight loop (connect → init
+            // handshake → fail → disconnect → re-advertise) that floods the
+            // logs and starves the main actor. Skip it until the cooldown
+            // expires or the user brings the app forward.
+            if let until = vhidFailureCooldowns[id], ContinuousClock.now < until {
+                return
+            }
             if let existing = devices[id] {
                 // Re-discovery: only re-attempt connect if not already in flight.
                 switch existing.connectionState {
@@ -173,7 +182,9 @@ extension BridgeCoordinator {
                     startDispatch(for: id)
                     await applySecondaryInputs(for: id, modeID: preferred)
                 } else {
-                    devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+                    if let r = devices[id] { refreshKnownController(for: r) }
+                    await failVirtualHID(for: id)
+                    return
                 }
                 if let updated = devices[id] {
                     refreshKnownController(for: updated)
