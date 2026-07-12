@@ -15,23 +15,30 @@ final class BridgeCoordinator {
     /// Cleared when the transport becomes available again.
     var transportUnavailableReason: String?
     /// Non-nil when virtual-controller output is blocked. Drives the
-    /// permission banner in the main window and menu bar. Set and cleared
-    /// only by observed VHID creation outcomes in makeVirtualHID — the TCC
-    /// post-event check is NOT trusted as a standalone signal (it reports
-    /// not-granted on machines where the Accessibility box is ticked and
-    /// the VHID works fine); it only refines the failure message.
+    /// permission banner in the main window and menu bar. Set only by
+    /// failVirtualHID (observed VHID creation failures) and cleared by any
+    /// successful creation (makeVirtualHID, or activateJoyConPair for the
+    /// merged pair) — the TCC post-event check is NOT trusted as a
+    /// standalone signal (it reports not-granted on machines where the
+    /// Accessibility box is ticked and the VHID works fine); it only
+    /// refines the failure message.
     var hidAccessIssue: HIDAccessIssue?
 
     // Per-peripheral auto-connect suppression after a VHID creation failure,
     // set by failVirtualHID and checked in the .discovered handler. Without
     // it the forced disconnect + re-advertisement reconnects in a tight loop.
-    // Cleared wholesale when the app comes forward (the user granting the
-    // permission necessarily foregrounds System Settings and then us).
+    // Cleared wholesale when the app comes forward, and per-device by an
+    // expiry task armed in failVirtualHID (accessory mode never gets the
+    // activation clear). Both clears restart discovery — see
+    // rescanAfterVHIDFailureCooldown — so recovery doesn't depend on a fresh
+    // advertisement CoreBluetooth may never re-report.
     @ObservationIgnored
     var vhidFailureCooldowns: [DeviceID: ContinuousClock.Instant] = [:]
 
     func clearVHIDFailureCooldowns() {
+        guard !vhidFailureCooldowns.isEmpty else { return }
         vhidFailureCooldowns.removeAll()
+        Task { await rescanAfterVHIDFailureCooldown() }
     }
     var pairingPrompt: PairingPrompt?
     // The device whose ProfilePickerSheet is currently being shown. Updated via

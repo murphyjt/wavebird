@@ -16,11 +16,11 @@ struct MenuBarContent: View {
             Divider()
         }
 
-        if coordinator.hidAccessIssue != nil {
+        if let issue = coordinator.hidAccessIssue {
             Button {
                 openAccessibilitySettings()
             } label: {
-                Label("Accessibility Permission Needed…", systemImage: "exclamationmark.triangle.fill")
+                Label(issue.menuTitle, systemImage: "exclamationmark.triangle.fill")
             }
             Divider()
         }

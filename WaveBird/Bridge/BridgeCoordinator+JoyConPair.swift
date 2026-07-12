@@ -226,11 +226,20 @@ extension BridgeCoordinator {
             transport: .usb,
             onSetReport: onSetReport
         ) else {
+            // Drop the half-formed pair immediately — a non-nil joyConPair
+            // slot implies a live VHID (see the property comment), and waiting
+            // for the two .disconnected events to tear it down leaves that
+            // invariant transiently false. Teardown first also keeps the
+            // survivor-requeue logic in the .disconnected handler from seeing
+            // the pair. Both sides are marked failed either way.
+            tearDownJoyConPair()
             await failVirtualHID(for: pair.leftID)
             await failVirtualHID(for: pair.rightID)
             return
         }
         hidAccessIssue = nil
+        vhidFailureCooldowns[pair.leftID] = nil
+        vhidFailureCooldowns[pair.rightID] = nil
         await vhid.activate()
         pair.virtualHID = vhid
         pair.session = session
