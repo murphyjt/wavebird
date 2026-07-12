@@ -111,8 +111,8 @@ extension BridgeCoordinator {
             // instant failVirtualHID drops the link; auto-connecting again
             // would fail identically, in a tight loop (connect → init
             // handshake → fail → disconnect → re-advertise) that floods the
-            // logs and starves the main actor. Skip it until the cooldown
-            // expires or the user brings the app forward.
+            // logs and starves the main actor. Skip it — cooldown expiry or
+            // the app coming forward retries via rescanAfterVHIDFailureCooldown.
             if let until = vhidFailureCooldowns[id], ContinuousClock.now < until {
                 return
             }
@@ -253,7 +253,13 @@ extension BridgeCoordinator {
             rumbleRefreshBoxes[id] = nil
             testRumbleTasks[id]?.cancel()
             testRumbleTasks[id] = nil
-            devices[id]?.connectionState = .disconnected
+            // Preserve a .failed marking (VHID failure, connect timeout) so
+            // the row keeps showing why the controller dropped; reconnecting
+            // overwrites it via .discovered → .connecting as usual.
+            switch devices[id]?.connectionState {
+            case .failed: break
+            default: devices[id]?.connectionState = .disconnected
+            }
             devices[id]?.virtualHID = nil
             devices[id]?.session = nil
 

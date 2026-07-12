@@ -154,6 +154,7 @@ extension BridgeCoordinator {
             onSetReport: onSetReport
         ) else { return nil }
         hidAccessIssue = nil
+        vhidFailureCooldowns[record.id] = nil
         return (vhid, session)
     }
 
@@ -165,8 +166,34 @@ extension BridgeCoordinator {
     func failVirtualHID(for id: DeviceID) async {
         hidAccessIssue = HIDAccessIssue.current()
         devices[id]?.connectionState = .failed("Failed to create virtual HID device")
-        vhidFailureCooldowns[id] = ContinuousClock.now.advanced(by: .seconds(60))
+        let until = ContinuousClock.now.advanced(by: .seconds(60))
+        vhidFailureCooldowns[id] = until
+        // Self-expire: accessory mode never posts didBecomeActive, so the
+        // activation-driven clear can't be the only retry trigger. Skipped
+        // if a wholesale clear or a newer failure superseded this deadline.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(until: until, clock: .continuous)
+            guard let self, self.vhidFailureCooldowns[id] == until else { return }
+            self.vhidFailureCooldowns[id] = nil
+            await self.rescanAfterVHIDFailureCooldown()
+        }
         await transport(for: id.transport)?.disconnect(id)
+    }
+
+    // Lifting a cooldown must not wait for a fresh advertisement: with
+    // duplicate filtering on, CoreBluetooth coalesces discoveries per scan
+    // session, so the .discovered swallowed during the cooldown may have been
+    // the only one this session. Restarting discovery opens a new session — a
+    // still-advertising controller re-fires .discovered immediately, a
+    // sleeping one on its next button press — and the normal
+    // discovered → connect path (with its calibrated timeout) does the rest.
+    func rescanAfterVHIDFailureCooldown() async {
+        guard isScanning else { return }
+        let matchers = allScanMatchers()
+        for t in transports {
+            await t.stopDiscovery()
+            await t.startDiscovery(matchers: matchers)
+        }
     }
 
     // Always-on diagnostic log for output reports the host sends us.

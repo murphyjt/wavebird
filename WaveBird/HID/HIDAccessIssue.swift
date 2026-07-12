@@ -17,6 +17,16 @@ enum HIDAccessIssue: Equatable {
             : .permissionDenied
     }
 
+    // Menu-bar item label. Must not assert a permission problem for
+    // .vhidCreationFailed — that's the case where the TCC check said the
+    // permission WAS granted; the full message hedges, the label should too.
+    var menuTitle: String {
+        switch self {
+        case .permissionDenied: "Accessibility Permission Needed…"
+        case .vhidCreationFailed: "Virtual Controller Blocked…"
+        }
+    }
+
     var message: String {
         switch self {
         // "Reconnect" not "press a button": only LTK-paired controllers wake
