@@ -227,6 +227,7 @@ struct MappingProfileTests {
 }
 
 @MainActor
+@Suite(.serialized)
 struct MappingProfileStoreTests {
 
     private func makeStore() -> MappingProfileStore {
