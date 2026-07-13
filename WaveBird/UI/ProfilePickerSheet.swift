@@ -3,21 +3,20 @@ import SwiftUI
 struct ProfilePickerSheet: View {
     let coordinator: BridgeCoordinator
     let deviceID: DeviceID
-    @State private var selectedModeID: String
+    @State private var selectedProfileID: String
 
     init(coordinator: BridgeCoordinator, deviceID: DeviceID) {
         self.coordinator = coordinator
         self.deviceID = deviceID
-        // Initial selection prefers the device's current mode if it's in the
-        // user-facing allow-list; otherwise falls back to the first allow-listed
-        // entry so first-time setup doesn't open with the radio group landing on
-        // a DEBUG-only advanced mode.
+        // Initial selection: the device's current default-profile equivalent,
+        // clamped to the allow-list so first-time setup never lands on a
+        // DEBUG-only advanced mode.
         let current = coordinator.devices[deviceID]?.outputModeID
-        let initial: String = {
+        let baseID: String = {
             if let current, HIDOutputCatalog.allowListIDs.contains(current) { return current }
             return coordinator.catalog.firstAllowListedID
         }()
-        _selectedModeID = State(initialValue: initial)
+        _selectedProfileID = State(initialValue: MappingProfile.defaultProfileID(forModeID: baseID))
     }
 
     var body: some View {
@@ -31,27 +30,23 @@ struct ProfilePickerSheet: View {
                     .multilineTextAlignment(.center)
             }
 
-            Picker("Profile", selection: $selectedModeID) {
-                ForEach(coordinator.catalog.entries) { entry in
+            Picker("Profile", selection: $selectedProfileID) {
+                ForEach(coordinator.mappingProfiles.builtInProfiles + coordinator.mappingProfiles.customProfiles) { profile in
                     Label {
-                        Text(entry.displayName)
+                        Text(profile.name)
                     } icon: {
-                        // Brand glyphs (xbox.logo, playstation.logo) have
-                        // different intrinsic widths than gamecontroller.fill;
-                        // a fixed frame keeps text baselines aligned across
-                        // rows in the radio group.
-                        Image(systemName: iconName(forOutputModeID: entry.id))
+                        Image(systemName: iconName(forOutputModeID: profile.baseModeID))
                             .frame(width: 22, alignment: .center)
                     }
                     .padding(.leading, 8)
-                    .tag(entry.id)
+                    .tag(profile.id)
                 }
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()
 
             Button("Start") {
-                Task { await coordinator.activateWithProfile(selectedModeID, for: deviceID) }
+                Task { await coordinator.activateWithProfile(selectedProfileID, for: deviceID) }
             }
             .keyboardShortcut(.return)
             .buttonStyle(.borderedProminent)

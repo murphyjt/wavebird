@@ -143,19 +143,30 @@ struct ControllerDetailSheet: View {
 
     @ViewBuilder
     private func generalTab(live: DeviceRecord?, paired: KnownController?, axis: AxisSettings?, xbox: XboxOutputSettings?) -> some View {
-        let binding = presentAsBinding(live: live, paired: paired)
+        let binding = profileBinding(live: live, paired: paired)
+        let selectedBase = coordinator.resolveMappingProfile(id: binding.wrappedValue).baseModeID
         Form {
             Section {
                 LabeledContent("Use profile") {
                     Picker("", selection: binding) {
-                        ForEach(coordinator.catalog.entries) { entry in
-                            Label(entry.displayName, systemImage: Self.iconName(forOutputModeID: entry.id))
-                                .tag(entry.id)
+                        ForEach(coordinator.mappingProfiles.builtInProfiles) { profile in
+                            Label(profile.name, systemImage: Self.iconName(forOutputModeID: profile.baseModeID))
+                                .tag(profile.id)
+                        }
+                        if !coordinator.mappingProfiles.customProfiles.isEmpty {
+                            Divider()
+                            ForEach(coordinator.mappingProfiles.customProfiles) { profile in
+                                Label(profile.name, systemImage: Self.iconName(forOutputModeID: profile.baseModeID))
+                                    .tag(profile.id)
+                            }
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
                     .fixedSize()
+                }
+                SettingsLink {
+                    Text("Manage Profiles…")
                 }
             }
 
@@ -163,7 +174,7 @@ struct ControllerDetailSheet: View {
                 StickSettingsSection(settings: axis)
             }
 
-            if let xbox, binding.wrappedValue == "xboxSeries" {
+            if let xbox, selectedBase == "xboxSeries" {
                 XboxAdvancedSection(settings: xbox)
             }
         }
@@ -291,22 +302,22 @@ struct ControllerDetailSheet: View {
         .padding(20)
     }
 
-    // Present-as picker binding. Writes to the live record (republishes the
-    // virtual HID) and persists the per-serial preference so the choice
-    // survives disconnects. Reads prefer live → paired preference → global default.
-    private func presentAsBinding(live: DeviceRecord?, paired: KnownController?) -> Binding<String> {
+    // Profile picker binding. Reads prefer the live connection → the paired
+    // record's effective selection (legacy mode IDs resolve to that mode's
+    // default profile) → the global default's default profile.
+    private func profileBinding(live: DeviceRecord?, paired: KnownController?) -> Binding<String> {
         Binding(
             get: {
-                live?.outputModeID
-                    ?? paired?.preferredOutputModeID
-                    ?? coordinator.defaultOutputModeID
+                live?.mappingProfileID
+                    ?? paired?.resolvedProfileID
+                    ?? MappingProfile.defaultProfileID(forModeID: coordinator.defaultOutputModeID)
             },
             set: { id in
                 if let liveID = live?.id {
-                    Task { await coordinator.setOutputMode(id, for: liveID) }
+                    Task { await coordinator.applyProfile(id, for: liveID) }
                 }
                 if let serial = paired?.serial ?? live?.serial {
-                    Task { await coordinator.setPreferredOutputMode(id, forSerial: serial) }
+                    Task { await coordinator.setPreferredProfile(id, forSerial: serial) }
                 }
             }
         )
