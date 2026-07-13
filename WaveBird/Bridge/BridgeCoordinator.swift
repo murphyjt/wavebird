@@ -8,6 +8,7 @@ final class BridgeCoordinator {
     let profiles: [any ControllerProfile]
     let transports: [any Transport]
     let catalog: HIDOutputCatalog
+    let mappingProfiles: MappingProfileStore
 
     var devices: [DeviceID: DeviceRecord] = [:]
     var isScanning = false
@@ -91,11 +92,11 @@ final class BridgeCoordinator {
     @ObservationIgnored
     var splitJoyConSerialsThisSession: Set<String> = []
 
-    // Holds the profile mode chosen in ProfilePickerSheet for controllers whose
+    // Holds the profile ID chosen in ProfilePickerSheet for controllers whose
     // KnownController entry doesn't exist yet at selection time. Consumed by
     // recordController so the preference survives the pairing exchange.
     @ObservationIgnored
-    var pendingProfileModeIDs: [String: String] = [:]
+    var pendingProfileIDs: [String: String] = [:]
 
     @ObservationIgnored
     private var consumerTask: Task<Void, Never>?
@@ -194,6 +195,38 @@ final class BridgeCoordinator {
         return made
     }
 
+    // Per-device live mapping specs, sampled by the off-main dispatch tasks
+    // (same lock-guarded-snapshot idiom as rumble/axis settings). Seeded at
+    // profile resolution; updated in place on profile edits so a live change
+    // applies without restarting the dispatch task or republishing.
+    @ObservationIgnored
+    var mappingSpecBoxes: [DeviceID: MappingSpecBox] = [:]
+
+    // The single Joy-Con pair's spec box (one pair at a time, like the pair
+    // itself). Reset to .identity on pair teardown.
+    @ObservationIgnored
+    let pairMappingSpecBox = MappingSpecBox()
+
+    // Never returns nil: dangling/unknown IDs (deleted profile, DEBUG-only
+    // mode in a release build) fall back to the default profile of the
+    // global default mode — same degradation as catalog.resolved.
+    func resolveMappingProfile(id: String?) -> MappingProfile {
+        if let id, let profile = mappingProfiles.profile(id: id) { return profile }
+        return mappingProfiles.profile(id: MappingProfile.defaultProfileID(forModeID: defaultOutputModeID))
+            ?? MappingProfile(id: MappingProfile.defaultProfileID(forModeID: defaultOutputModeID),
+                              name: defaultOutputModeID,
+                              baseModeID: defaultOutputModeID)
+    }
+
+    func seedMappingSpec(for id: DeviceID, profile: MappingProfile) {
+        let spec = ResolvedMappingSpec.resolve(profile: profile)
+        if let box = mappingSpecBoxes[id] {
+            box.update(spec)
+        } else {
+            mappingSpecBoxes[id] = MappingSpecBox(spec)
+        }
+    }
+
     // Settings key for a live record: its serial, or a PID-derived placeholder
     // when the serial flash read hasn't landed (degenerate — settings for an
     // un-serialized controller don't meaningfully persist, but the accessor
@@ -230,6 +263,7 @@ final class BridgeCoordinator {
         self.profiles = profiles
         self.transports = transports
         self.catalog = catalog
+        self.mappingProfiles = MappingProfileStore(catalog: catalog)
         let stored = UserDefaults.standard.string(forKey: Self.outputModeDefaultsKey)
         self.defaultOutputModeID = stored.flatMap { catalog.entry(id: $0)?.id } ?? catalog.firstAllowListedID
         self.knownControllers = Self.loadKnownControllers()

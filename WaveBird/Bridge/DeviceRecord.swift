@@ -29,6 +29,10 @@ struct DeviceRecord: Identifiable {
     // Populated from the 0x1FA000 flash read during init. nil = not yet read.
     var onDeviceHostAddresses: [Data]? = nil
     var outputModeID: String
+    // The mapping profile currently selected for this connection. outputModeID
+    // stays the profile's BASE mode (it drives VHID identity everywhere);
+    // this ID is what pickers display and what spec boxes are seeded from.
+    var mappingProfileID: String? = nil
     // Mode captured at the moment the virtual HID device was created. We
     // intentionally keep using this instead of the record's live outputModeID
     // while republishing so reports keep matching the active descriptor.
