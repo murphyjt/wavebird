@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var launch: LaunchAtLoginService
+    let coordinator: BridgeCoordinator
     @AppStorage("WaveBird.hideDockIcon") private var hideDockIcon = false
     @AppStorage("WaveBird.openInBackground") private var openInBackground = false
     @AppStorage("WaveBird.idleDisconnectMinutes") private var idleDisconnectMinutes = 10
@@ -45,7 +46,10 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .tabItem { Label("General", systemImage: "gear") }
+
+            ProfilesSettingsTab(coordinator: coordinator)
+                .tabItem { Label("Profiles", systemImage: "gamecontroller") }
         }
-        .frame(width: 420, height: 280)
+        .frame(width: 480, height: 400)
     }
 }
