@@ -116,6 +116,7 @@ extension BridgeCoordinator {
         dispatchTasks[id]?.cancel(); dispatchTasks[id] = nil
         stateContinuations[id]?.finish(); stateContinuations[id] = nil
         rumbleRefreshBoxes[id]?.cancel(); rumbleRefreshBoxes[id] = nil
+        mappingSpecBoxes[id] = nil
         devices[id]?.virtualHID = nil
         devices[id]?.session = nil
     }
@@ -199,6 +200,30 @@ extension BridgeCoordinator {
 
         if let serial = left.serial { persistPairPreference(profileID: profile.id, forSerial: serial, record: left) }
         if let serial = right.serial { persistPairPreference(profileID: profile.id, forSerial: serial, record: right) }
+
+        // Keep both side records in sync with the pair's actual profile/mode
+        // on every path through this function — deleteMappingProfile's device
+        // loop and the detail sheet's profileBinding both read the per-device
+        // record, not the pair, for a pair member.
+        devices[pair.leftID]?.mappingProfileID = profile.id
+        devices[pair.rightID]?.mappingProfileID = profile.id
+        devices[pair.leftID]?.outputModeID = modeID
+        devices[pair.rightID]?.outputModeID = modeID
+
+        // The detail sheet's picker binding fires applyProfile twice per
+        // change (direct call + via setPreferredProfile) — no-op the repeat
+        // rather than tearing down and rebuilding the merged VHID twice.
+        guard pair.mappingProfileID != profile.id else { return }
+
+        // Same base output mode, different mapping: spec-box swap only, same
+        // contract as applyProfile's solo path (no republish for a same-base
+        // switch). The merged VHID rebuild is expensive and user-visible —
+        // skip it here too.
+        if pair.activeOutputModeID == modeID {
+            pair.mappingProfileID = profile.id
+            pairMappingSpecBox.update(ResolvedMappingSpec.resolve(profile: profile))
+            return
+        }
 
         let outProfile = catalog.resolved(id: modeID).makeProfile(joyConPairProfile)
         let session = outProfile.makeSession()
