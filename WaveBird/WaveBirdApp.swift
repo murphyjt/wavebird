@@ -28,7 +28,7 @@ struct WaveBirdApp: App {
         .windowResizability(.contentSize)
 
         Settings {
-            SettingsView(launch: appDelegate.launch)
+            SettingsView(launch: appDelegate.launch, coordinator: appDelegate.coordinator)
         }
 
         MenuBarExtra("WaveBird", systemImage: "gamecontroller") {
