@@ -65,3 +65,26 @@ struct PhysicalButtonTests {
         #expect(MappingChoice(rawValue: "nonsense") == nil)
     }
 }
+
+struct MappingControlsTests {
+
+    @Test func everyShippingModeHasACatalog() {
+        for modeID in HIDOutputCatalog.allowListIDs {
+            #expect(!MappingControls.controls(forModeID: modeID).isEmpty,
+                    "no control catalog for \(modeID)")
+        }
+    }
+
+    @Test func controlIDsAreUniqueAndModePrefixed() {
+        for modeID in HIDOutputCatalog.allowListIDs {
+            let ids = MappingControls.controls(forModeID: modeID).map(\.id)
+            #expect(Set(ids).count == ids.count)
+            #expect(ids.allSatisfy { $0.hasPrefix("\(modeID).") })
+        }
+    }
+
+    @Test func debugOnlyModesHaveNoCatalog() {
+        // Passthrough bypasses buildReport entirely; mapping is meaningless there.
+        #expect(MappingControls.controls(forModeID: "ns2Passthrough").isEmpty)
+    }
+}

@@ -122,3 +122,26 @@ enum MappingChoice: RawRepresentable, Codable, Sendable, Hashable {
         }
     }
 }
+
+// Which canonical ControllerState field an output mode's encoder reads for a
+// given control. `.buttons` may carry several ButtonSet members when the
+// encoder ORs them (e.g. Xbox Menu reads .plus OR .start) — clearing/setting
+// the driver touches all of them together.
+enum ControlDriver: Sendable, Hashable {
+    case buttons(ButtonSet)
+    case leftBumper
+    case rightBumper
+    case leftTrigger
+    case rightTrigger
+}
+
+// One remappable row of an output mode: stable ID (persistence key — never
+// rename), display name (editor row label), and the driver its encoder reads.
+// Default source is copy-through of the driver field, not a stored button:
+// shoulder defaults differ per input controller (Pro bumper ← L, GC bumper ←
+// ZL), and copy-through also preserves GC's analog triggers on Default.
+struct OutputControl: Sendable, Identifiable, Hashable {
+    let id: String
+    let displayName: String
+    let driver: ControlDriver
+}
