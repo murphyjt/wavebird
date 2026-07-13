@@ -86,16 +86,6 @@ extension BridgeCoordinator {
         await republishVirtualHID(for: id, modeID: profile.baseModeID)
     }
 
-    // Transitional shims so ControllerDetailSheet still compiles until Task 8
-    // rewires it. Bare mode IDs resolve to that mode's default profile.
-    func setPreferredOutputMode(_ modeID: String, forSerial serial: String) async {
-        await setPreferredProfile(modeID, forSerial: serial)
-    }
-
-    func setOutputMode(_ modeID: String, for id: DeviceID) async {
-        await applyProfile(modeID, for: id)
-    }
-
     // Insert or replace a KnownController entry. isPaired: true after a
     // successful LTK exchange or when the controller's flash already had this
     // host's entry; false for profile-only records.
