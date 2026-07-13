@@ -77,17 +77,17 @@ extension BridgeCoordinator {
         await tearDownSoloJoyCon(id: id)
 
         if let serial = record.serial,
-           let preferred = knownControllers[serial]?.preferredOutputModeID {
-            devices[id]?.outputModeID = preferred
-            if let r = devices[id], let (vhid, session) = makeVirtualHID(for: r, modeID: preferred) {
+           let preferredID = knownControllers[serial]?.resolvedProfileID {
+            let profile = resolveMappingProfile(id: preferredID)
+            devices[id]?.outputModeID = profile.baseModeID
+            devices[id]?.mappingProfileID = profile.id
+            seedMappingSpec(for: id, profile: profile)
+            if let r = devices[id], let (vhid, session) = makeVirtualHID(for: r, modeID: profile.baseModeID) {
                 await vhid.activate()
                 devices[id]?.virtualHID = vhid
                 devices[id]?.session = session
-                devices[id]?.activeOutputModeID = preferred
+                devices[id]?.activeOutputModeID = profile.baseModeID
                 startDispatch(for: id)
-                // Profile-first: surface the LTK-pair prompt now that the
-                // solo VHID is up. The picker-path covers itself via
-                // activateWithProfile's existing maybePromptForPairing call.
                 if let updated = devices[id] {
                     maybePromptForPairing(record: updated)
                 }
@@ -173,11 +173,11 @@ extension BridgeCoordinator {
         guard let left = devices[leftID], let right = devices[rightID] else { return }
         joyConPair = JoyConPair(leftID: leftID, rightID: rightID)
 
-        let storedMode: String? = left.serial.flatMap { knownControllers[$0]?.preferredOutputModeID }
-            ?? right.serial.flatMap { knownControllers[$0]?.preferredOutputModeID }
+        let storedProfileID: String? = left.serial.flatMap { knownControllers[$0]?.resolvedProfileID }
+            ?? right.serial.flatMap { knownControllers[$0]?.resolvedProfileID }
 
-        if let storedMode {
-            await activateJoyConPair(modeID: storedMode)
+        if let storedProfileID {
+            await activateJoyConPair(profileID: storedProfileID)
         } else {
             // Surface a single picker keyed to L's record. activateWithProfile
             // recognizes the JoyCon-pair case and routes through activateJoyConPair.
@@ -190,13 +190,15 @@ extension BridgeCoordinator {
     // path. Per-side dispatch tasks update the pair's left/right snapshot and
     // emit a single merged report; rumble is split per-side and written to
     // each Joy-Con's vibration char.
-    func activateJoyConPair(modeID: String) async {
+    func activateJoyConPair(profileID: String) async {
         guard let pair = joyConPair,
               let left = devices[pair.leftID],
               let right = devices[pair.rightID] else { return }
+        let profile = resolveMappingProfile(id: profileID)
+        let modeID = profile.baseModeID
 
-        if let serial = left.serial { persistPairPreference(modeID, forSerial: serial, record: left) }
-        if let serial = right.serial { persistPairPreference(modeID, forSerial: serial, record: right) }
+        if let serial = left.serial { persistPairPreference(profileID: profile.id, forSerial: serial, record: left) }
+        if let serial = right.serial { persistPairPreference(profileID: profile.id, forSerial: serial, record: right) }
 
         let outProfile = catalog.resolved(id: modeID).makeProfile(joyConPairProfile)
         let session = outProfile.makeSession()
@@ -244,6 +246,8 @@ extension BridgeCoordinator {
         pair.virtualHID = vhid
         pair.session = session
         pair.activeOutputModeID = modeID
+        pair.mappingProfileID = profile.id
+        pairMappingSpecBox.update(ResolvedMappingSpec.resolve(profile: profile))
         joyConPairVHIDActive = true
         startPairDispatch(for: pair.leftID)
         startPairDispatch(for: pair.rightID)
@@ -257,10 +261,8 @@ extension BridgeCoordinator {
     }
 
     // Persist the user's profile choice on each Joy-Con serial individually so
-    // either side reconnecting alone restores the same mode once paired up.
-    // Display name stays per-side ("Joy-Con 2 (L)"), not the pair name — the
-    // entry represents a physical controller, not the merged identity.
-    func persistPairPreference(_ modeID: String, forSerial serial: String, record: DeviceRecord) {
+    // either side reconnecting alone restores the same profile once paired up.
+    func persistPairPreference(profileID: String, forSerial serial: String, record: DeviceRecord) {
         let onDevicePaired = HostAdapter.address().flatMap { record.onDeviceHostAddresses?.contains($0) } ?? false
         var entry = knownControllers[serial] ?? KnownController(
             serial: serial,
@@ -272,7 +274,7 @@ extension BridgeCoordinator {
             preferredProfileID: nil,
             isPaired: onDevicePaired
         )
-        entry.preferredOutputModeID = modeID
+        entry.preferredProfileID = profileID
         entry.lastSeenAt = Date()
         entry.peripheralUUID = record.id.raw
         knownControllers[serial] = entry
@@ -291,6 +293,7 @@ extension BridgeCoordinator {
         rumbleRefreshBoxes[pair.rightID]?.cancel(); rumbleRefreshBoxes[pair.rightID] = nil
         pair.virtualHID = nil
         pair.session = nil
+        pairMappingSpecBox.update(.identity)
         joyConPair = nil
         joyConPairVHIDActive = false
     }

@@ -13,9 +13,7 @@ extension BridgeCoordinator {
         devices[id]?.mappingProfileID = profile.id
 
         if let pair = joyConPair, pair.includes(id) {
-            // Task 7 converts activateJoyConPair to profile IDs; until then
-            // route the base mode so the merged VHID still comes up right.
-            await activateJoyConPair(modeID: profile.baseModeID)
+            await activateJoyConPair(profileID: profile.id)
             advanceAwaitingProfileSelection()
             return
         }
@@ -76,7 +74,7 @@ extension BridgeCoordinator {
     func applyProfile(_ profileID: String, for id: DeviceID) async {
         let profile = resolveMappingProfile(id: profileID)
         if let pair = joyConPair, pair.includes(id) {
-            await activateJoyConPair(modeID: profile.baseModeID)  // Task 7: profile-aware
+            await activateJoyConPair(profileID: profile.id)
             return
         }
         devices[id]?.mappingProfileID = profile.id

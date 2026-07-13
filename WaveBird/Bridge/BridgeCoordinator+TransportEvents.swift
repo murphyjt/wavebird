@@ -83,6 +83,7 @@ extension BridgeCoordinator {
         let profile = record.profile
         let calibration = record.calibration
         let axis = pairAxisSettings()
+        let mapBox = pairMappingSpecBox
         let kind = id.transport
         let (stream, continuation) = AsyncStream.makeStream(of: RawReport.self, bufferingPolicy: .bufferingNewest(1))
         stateContinuations[id] = continuation
@@ -105,7 +106,10 @@ extension BridgeCoordinator {
                 let sig = merged.idleSignature
                 if sig != lastSig { lastSig = sig; self.activityTracker.touch(id, at: .now) }
                 let inv = axis.snapshot()
-                let report = await session.buildReport(merged.invertingY(left: inv.invertLeftY, right: inv.invertRightY))
+                let mapped = merged
+                    .invertingY(left: inv.invertLeftY, right: inv.invertRightY)
+                    .applyingMapping(mapBox.current)
+                let report = await session.buildReport(mapped)
                 try? await vhid.dispatch(report)
             }
         }
