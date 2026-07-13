@@ -35,3 +35,33 @@ struct ButtonBitTests {
         #expect(buttons.contains(.gr))
     }
 }
+
+struct PhysicalButtonTests {
+
+    @Test func rawValuesRoundTrip() {
+        for button in PhysicalButton.allCases {
+            #expect(PhysicalButton(rawValue: button.rawValue) == button)
+        }
+    }
+
+    @Test func reservedSentinelsDontCollide() {
+        // The editor picker tags "default" and "off" alongside raw values.
+        #expect(PhysicalButton(rawValue: "off") == nil)
+        #expect(PhysicalButton(rawValue: "default") == nil)
+    }
+
+    @Test func gripAndRailMembersMatch() {
+        #expect(PhysicalButton.gl.buttonSetMember == .gl)
+        #expect(PhysicalButton.gr.buttonSetMember == .gr)
+        #expect(PhysicalButton.sl.buttonSetMember == .sl)
+        #expect(PhysicalButton.sr.buttonSetMember == .sr)
+    }
+
+    @Test func mappingChoiceRawValues() {
+        #expect(MappingChoice.off.rawValue == "off")
+        #expect(MappingChoice.physical(.gl).rawValue == "gl")
+        #expect(MappingChoice(rawValue: "off") == .off)
+        #expect(MappingChoice(rawValue: "zl") == .physical(.zl))
+        #expect(MappingChoice(rawValue: "nonsense") == nil)
+    }
+}
