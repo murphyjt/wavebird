@@ -88,3 +88,94 @@ struct MappingControlsTests {
         #expect(MappingControls.controls(forModeID: "ns2Passthrough").isEmpty)
     }
 }
+
+struct MappingTransformTests {
+
+    private func state(buttons: ButtonSet, shoulders: StandardShoulders = StandardShoulders()) -> ControllerState {
+        var s = ControllerState.zero
+        s.buttons = buttons
+        s.shoulders = shoulders
+        s.leftStick = SIMD2(100, -200)
+        return s
+    }
+
+    @Test func identitySpecIsUntouchedPassthrough() {
+        let input = state(buttons: [.a, .zl, .gl],
+                          shoulders: StandardShoulders(leftBumper: true, leftTriggerAnalog: 0x80))
+        let out = input.applyingMapping(.identity)
+        #expect(out.buttons == input.buttons)
+        #expect(out.shoulders == input.shoulders)
+        #expect(out.leftStick == input.leftStick)
+    }
+
+    @Test func glDrivesRemappedButton() {
+        // "Xbox A ← GL": Xbox A's driver is ButtonSet.b.
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .buttons(.b), source: .physical(.gl))
+        ])
+        let pressed = state(buttons: [.gl]).applyingMapping(spec)
+        #expect(pressed.buttons.contains(.b))
+        // The physical B button no longer drives the remapped control.
+        let bOnly = state(buttons: [.b]).applyingMapping(spec)
+        #expect(!bOnly.buttons.contains(.b))
+        // GL itself passes through untouched (it drives no default control).
+        #expect(pressed.buttons.contains(.gl))
+    }
+
+    @Test func glDrivesTriggerAsDigitalFullPull() {
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .leftTrigger, source: .physical(.gl))
+        ])
+        let pressed = state(buttons: [.gl]).applyingMapping(spec)
+        #expect(pressed.shoulders.leftTriggerDigital)
+        #expect(pressed.shoulders.leftTriggerAnalog == 0xFF)
+        // Original trigger source is cleared when the row is remapped.
+        let zl = state(buttons: [.zl],
+                       shoulders: StandardShoulders(leftTriggerDigital: true, leftTriggerAnalog: 0xFF))
+            .applyingMapping(spec)
+        #expect(!zl.shoulders.leftTriggerDigital)
+        #expect(zl.shoulders.leftTriggerAnalog == 0)
+    }
+
+    @Test func offSuppressesControl() {
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .buttons(.home), source: .off)
+        ])
+        let out = state(buttons: [.home]).applyingMapping(spec)
+        #expect(!out.buttons.contains(.home))
+    }
+
+    @Test func defaultRowsPreserveAnalogTriggers() {
+        // Non-default spec elsewhere; the LT row is untouched, so GC's analog
+        // trigger value copies through.
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .buttons(.b), source: .physical(.gl))
+        ])
+        let out = state(buttons: [],
+                        shoulders: StandardShoulders(leftTriggerAnalog: 0x80)).applyingMapping(spec)
+        #expect(out.shoulders.leftTriggerAnalog == 0x80)
+    }
+
+    @Test func multiMemberDriverClearsAndSetsTogether() {
+        // Xbox Menu reads .plus OR .start; remapping it must silence both.
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .buttons([.plus, .start]), source: .physical(.gr))
+        ])
+        let startOnly = state(buttons: [.start]).applyingMapping(spec)
+        #expect(!startOnly.buttons.contains(.start))
+        #expect(!startOnly.buttons.contains(.plus))
+        let grPressed = state(buttons: [.gr]).applyingMapping(spec)
+        #expect(grPressed.buttons.contains(.plus))
+        #expect(grPressed.buttons.contains(.start))
+    }
+
+    @Test func onePhysicalButtonMayDriveSeveralControls() {
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .buttons(.b), source: .physical(.gl)),
+            .init(driver: .rightBumper, source: .physical(.gl)),
+        ])
+        let out = state(buttons: [.gl]).applyingMapping(spec)
+        #expect(out.buttons.contains(.b))
+        #expect(out.shoulders.rightBumper)
+    }
+}
