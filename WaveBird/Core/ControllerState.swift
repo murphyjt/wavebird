@@ -27,6 +27,8 @@ struct ButtonSet: OptionSet, Sendable, Hashable {
     static let c         = ButtonSet(rawValue: 1 << 20)
     static let sl        = ButtonSet(rawValue: 1 << 21)
     static let sr        = ButtonSet(rawValue: 1 << 22)
+    static let gl        = ButtonSet(rawValue: 1 << 23)
+    static let gr        = ButtonSet(rawValue: 1 << 24)
 }
 
 struct IMUSample: Sendable, Hashable {

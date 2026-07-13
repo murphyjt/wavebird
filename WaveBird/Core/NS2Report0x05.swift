@@ -65,12 +65,19 @@ enum NS2ButtonBits {
         Entry(12, .home), Entry(13, .capture), Entry(14, .c),
         Entry(16, .dpadDown), Entry(17, .dpadUp), Entry(18, .dpadRight), Entry(19, .dpadLeft),
         Entry(22, .l), Entry(23, .zl),
+        // Rear grip buttons GL/GR — byte 3 of the button field, 0x02/0x01.
+        // Source: ndeadly hid_reports.md (Report 0x05 Button Format).
+        // Unverified on hardware as of 2026-07-12.
+        Entry(24, .gr), Entry(25, .gl),
     ]
 
     static let joyConL: [Entry] = [
         Entry(8, .minus), Entry(11, .stickL), Entry(13, .capture),
         Entry(16, .dpadDown), Entry(17, .dpadUp), Entry(18, .dpadRight), Entry(19, .dpadLeft),
         Entry(22, .l), Entry(23, .zl),
+        // Side-rail SL/SR (Left Joy-Con) — byte 2, 0x20/0x10 per ndeadly
+        // hid_reports.md. Unverified on hardware as of 2026-07-12.
+        Entry(20, .sr), Entry(21, .sl),
     ]
 
     static let joyConR: [Entry] = [
@@ -78,6 +85,9 @@ enum NS2ButtonBits {
         Entry(6, .r), Entry(7, .zr),
         Entry(9, .plus), Entry(10, .stickR),
         Entry(12, .home), Entry(14, .c),
+        // Side-rail SL/SR (Right Joy-Con) — byte 0, 0x20/0x10 per ndeadly
+        // hid_reports.md. Unverified on hardware as of 2026-07-12.
+        Entry(4, .sr), Entry(5, .sl),
     ]
 
     static func decode(_ bits: UInt32, table: [Entry]) -> ButtonSet {
