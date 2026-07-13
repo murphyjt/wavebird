@@ -15,6 +15,9 @@ final class JoyConPair: @unchecked Sendable {
     var virtualHID: VirtualHIDDevice?
     var session: (any HIDOutputSession)?
     var activeOutputModeID: String = ""
+    // Mapping profile driving the merged VHID (activeOutputModeID stays the
+    // base mode). Set in activateJoyConPair, cleared on teardown.
+    var mappingProfileID: String? = nil
     var leftState: ControllerState = .zero
     var rightState: ControllerState = .zero
 

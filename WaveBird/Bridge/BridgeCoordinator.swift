@@ -466,5 +466,45 @@ final class BridgeCoordinator {
         }
     }
 
+    // Push an edited profile's new mapping into every live connection using
+    // it. Spec boxes update in place, so no dispatch restart or republish.
+    func mappingProfileDidChange(_ profileID: String) {
+        guard let profile = mappingProfiles.profile(id: profileID) else { return }
+        let spec = ResolvedMappingSpec.resolve(profile: profile)
+        for (id, record) in devices where record.mappingProfileID == profileID {
+            mappingSpecBoxes[id]?.update(spec)
+        }
+        if joyConPair?.mappingProfileID == profileID {
+            pairMappingSpecBox.update(spec)
+        }
+    }
+
+    // Delete a custom profile: every reference falls back to its base mode's
+    // default profile (same VHID identity, stock mapping).
+    func deleteMappingProfile(_ profileID: String) async {
+        guard let fallbackID = mappingProfiles.delete(id: profileID) else { return }
+        var changed = false
+        for (serial, entry) in knownControllers where entry.preferredProfileID == profileID {
+            var updated = entry
+            updated.preferredProfileID = fallbackID
+            knownControllers[serial] = updated
+            changed = true
+        }
+        if changed { persistKnownControllers() }
+        for (id, record) in devices where record.mappingProfileID == profileID {
+            await applyProfile(fallbackID, for: id)
+        }
+        if joyConPair?.mappingProfileID == profileID {
+            await activateJoyConPair(profileID: fallbackID)
+        }
+    }
+
+    // "N controllers" subtitle in Settings → Profiles. Counts known
+    // controllers whose effective selection is this profile (legacy
+    // mode-only records count toward that mode's default profile).
+    func assignedControllerCount(profileID: String) -> Int {
+        knownControllers.values.count { $0.resolvedProfileID == profileID }
+    }
+
 }
 
