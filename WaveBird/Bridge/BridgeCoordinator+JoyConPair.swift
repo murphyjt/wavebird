@@ -269,6 +269,7 @@ extension BridgeCoordinator {
             lastSeenAt: Date(),
             peripheralUUID: record.id.raw,
             preferredOutputModeID: nil,
+            preferredProfileID: nil,
             isPaired: onDevicePaired
         )
         entry.preferredOutputModeID = modeID

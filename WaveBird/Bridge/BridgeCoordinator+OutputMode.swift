@@ -2,44 +2,42 @@ import CoreHID
 import Foundation
 
 extension BridgeCoordinator {
-    // Called by ProfilePickerSheet when the user confirms their profile choice.
-    // Creates the VHID that was deferred at .ready, then fires the pairing prompt
-    // if needed. Also used as the fallback when the sheet is dismissed without
-    // an explicit selection (defaults to defaultOutputModeID).
-    func activateWithProfile(_ modeID: String, for id: DeviceID) async {
+    // Called by ProfilePickerSheet when the user confirms their choice.
+    // `profileID` may be a well-known default ID, a custom profile ID, or (for
+    // legacy callers) a bare output-mode ID — resolveMappingProfile handles all.
+    func activateWithProfile(_ profileID: String, for id: DeviceID) async {
         guard let record = devices[id], record.awaitingProfileSelection else { return }
+        let profile = resolveMappingProfile(id: profileID)
         devices[id]?.awaitingProfileSelection = false
-        devices[id]?.outputModeID = modeID
+        devices[id]?.outputModeID = profile.baseModeID
+        devices[id]?.mappingProfileID = profile.id
 
-        // Joy-Con pair branch: when the awaiting-selection device is L of an
-        // active pair, route the chosen mode to the merged VHID instead of
-        // building a per-device one. activateJoyConPair persists the choice
-        // against both serials so either side reconnecting alone restores it.
         if let pair = joyConPair, pair.includes(id) {
-            await activateJoyConPair(modeID: modeID)
+            // Task 7 converts activateJoyConPair to profile IDs; until then
+            // route the base mode so the merged VHID still comes up right.
+            await activateJoyConPair(modeID: profile.baseModeID)
             advanceAwaitingProfileSelection()
             return
         }
 
         if let serial = record.serial {
             if knownControllers[serial] != nil {
-                await setPreferredOutputMode(modeID, forSerial: serial)
+                await setPreferredProfile(profile.id, forSerial: serial)
             } else {
-                pendingProfileModeIDs[serial] = modeID
-                // If the controller's flash already lists this host, the LTK is
-                // in place — record as paired without any wire exchange.
+                pendingProfileIDs[serial] = profile.id
                 let onDevicePaired = HostAdapter.address().flatMap { record.onDeviceHostAddresses?.contains($0) } ?? false
                 recordController(for: record, isPaired: onDevicePaired)
             }
         }
+        seedMappingSpec(for: id, profile: profile)
         guard let r = devices[id] else { return }
-        if let (vhid, session) = makeVirtualHID(for: r, modeID: modeID) {
+        if let (vhid, session) = makeVirtualHID(for: r, modeID: profile.baseModeID) {
             await vhid.activate()
             devices[id]?.virtualHID = vhid
             devices[id]?.session = session
-            devices[id]?.activeOutputModeID = modeID
+            devices[id]?.activeOutputModeID = profile.baseModeID
             startDispatch(for: id)
-            await applySecondaryInputs(for: id, modeID: modeID)
+            await applySecondaryInputs(for: id, modeID: profile.baseModeID)
         } else {
             await failVirtualHID(for: id)
             advanceAwaitingProfileSelection()
@@ -53,23 +51,51 @@ extension BridgeCoordinator {
 
     func dismissProfilePicker() async {
         guard let id = awaitingProfileSelectionID else { return }
-        await activateWithProfile(defaultOutputModeID, for: id)
+        await activateWithProfile(MappingProfile.defaultProfileID(forModeID: defaultOutputModeID), for: id)
     }
 
-    // Persist the user's preferred output mode for a specific paired serial,
-    // and if that controller is currently live, republish its virtual HID in
-    // the new mode immediately. The per-serial preference is applied again on
-    // future .ready transitions for this serial.
-    func setPreferredOutputMode(_ modeID: String, forSerial serial: String) async {
+    // Persist the per-serial profile selection (normalized to a real profile
+    // ID) and apply it live if the controller is connected. The legacy
+    // preferredOutputModeID is left untouched for downgrade safety.
+    func setPreferredProfile(_ profileID: String, forSerial serial: String) async {
+        let profile = resolveMappingProfile(id: profileID)
         guard var paired = knownControllers[serial] else { return }
-        if paired.preferredOutputModeID != modeID {
-            paired.preferredOutputModeID = modeID
+        if paired.preferredProfileID != profile.id {
+            paired.preferredProfileID = profile.id
             knownControllers[serial] = paired
             persistKnownControllers()
         }
         if let liveID = devices.first(where: { $0.value.serial == serial })?.key {
-            await setOutputMode(modeID, for: liveID)
+            await applyProfile(profile.id, for: liveID)
         }
+    }
+
+    // Apply a profile to a live connection. Same base = spec-box swap only
+    // (no republish, applies mid-session); different base = the existing
+    // republish path with the new VHID identity.
+    func applyProfile(_ profileID: String, for id: DeviceID) async {
+        let profile = resolveMappingProfile(id: profileID)
+        if let pair = joyConPair, pair.includes(id) {
+            await activateJoyConPair(modeID: profile.baseModeID)  // Task 7: profile-aware
+            return
+        }
+        devices[id]?.mappingProfileID = profile.id
+        seedMappingSpec(for: id, profile: profile)
+        guard devices[id]?.outputModeID != profile.baseModeID else { return }
+        devices[id]?.outputModeID = profile.baseModeID
+        UserDefaults.standard.set(profile.baseModeID, forKey: BridgeCoordinator.outputModeDefaultsKey)
+        guard devices[id]?.virtualHID != nil else { return }
+        await republishVirtualHID(for: id, modeID: profile.baseModeID)
+    }
+
+    // Transitional shims so ControllerDetailSheet still compiles until Task 8
+    // rewires it. Bare mode IDs resolve to that mode's default profile.
+    func setPreferredOutputMode(_ modeID: String, forSerial serial: String) async {
+        await setPreferredProfile(modeID, forSerial: serial)
+    }
+
+    func setOutputMode(_ modeID: String, for id: DeviceID) async {
+        await applyProfile(modeID, for: id)
     }
 
     // Insert or replace a KnownController entry. isPaired: true after a
@@ -83,7 +109,8 @@ extension BridgeCoordinator {
             displayName: record.profile.name,
             lastSeenAt: Date(),
             peripheralUUID: record.id.raw,
-            preferredOutputModeID: knownControllers[serial]?.preferredOutputModeID ?? pendingProfileModeIDs[serial],
+            preferredOutputModeID: knownControllers[serial]?.preferredOutputModeID,
+            preferredProfileID: knownControllers[serial]?.preferredProfileID ?? pendingProfileIDs[serial],
             isPaired: isPaired
         )
         persistKnownControllers()
@@ -109,16 +136,6 @@ extension BridgeCoordinator {
         }
         guard let transport = transport(for: id.transport) else { return }
         await transport.disconnect(id)
-    }
-
-    // Persist the new default for future devices, update this device's desired
-    // mode, and republish its virtual HID if it is currently active.
-    func setOutputMode(_ modeID: String, for id: DeviceID) async {
-        guard devices[id]?.outputModeID != modeID else { return }
-        devices[id]?.outputModeID = modeID
-        UserDefaults.standard.set(modeID, forKey: BridgeCoordinator.outputModeDefaultsKey)
-        guard devices[id]?.virtualHID != nil else { return }
-        await republishVirtualHID(for: id, modeID: modeID)
     }
 
     func output(for record: DeviceRecord, modeID: String) -> any HIDOutputProfile {

@@ -19,6 +19,11 @@ extension BridgeCoordinator {
         let profile = record.profile
         let calibration = record.calibration
         let axis = axisSettings(for: record)
+        let mapBox = mappingSpecBoxes[id] ?? {
+            let box = MappingSpecBox()
+            mappingSpecBoxes[id] = box
+            return box
+        }()
         // Only the Xbox mode emits gated secondaries (the GIP 0x20 stream). Scope
         // the toggle to that mode by serial so it can't suppress another mode's
         // secondaries (e.g. passthrough's forwarded reports) for the same controller.
@@ -37,7 +42,9 @@ extension BridgeCoordinator {
                 }
                 guard let parsed else { continue }
                 let inv = axis.snapshot()
-                let state = parsed.invertingY(left: inv.invertLeftY, right: inv.invertRightY)
+                let state = parsed
+                    .invertingY(left: inv.invertLeftY, right: inv.invertRightY)
+                    .applyingMapping(mapBox.current)
                 // Idle tracking: only a changed input fingerprint counts as activity.
                 let sig = state.idleSignature
                 if sig != lastSig { lastSig = sig; tracker.touch(id, at: .now) }
@@ -171,16 +178,20 @@ extension BridgeCoordinator {
             // events have already populated serial / onDeviceHostAddresses
             // if the flash reads succeeded.
             if let serial = record.serial,
-               let preferred = knownControllers[serial]?.preferredOutputModeID {
-                // Known preference — create VHID immediately.
-                devices[id]?.outputModeID = preferred
-                if let r = devices[id], let (vhid, session) = makeVirtualHID(for: r, modeID: preferred) {
+               let preferredID = knownControllers[serial]?.resolvedProfileID {
+                // Known preference — resolve the profile, seed the mapping
+                // spec, and create the VHID for its base mode immediately.
+                let profile = resolveMappingProfile(id: preferredID)
+                devices[id]?.outputModeID = profile.baseModeID
+                devices[id]?.mappingProfileID = profile.id
+                seedMappingSpec(for: id, profile: profile)
+                if let r = devices[id], let (vhid, session) = makeVirtualHID(for: r, modeID: profile.baseModeID) {
                     await vhid.activate()
                     devices[id]?.virtualHID = vhid
                     devices[id]?.session = session
-                    devices[id]?.activeOutputModeID = preferred
+                    devices[id]?.activeOutputModeID = profile.baseModeID
                     startDispatch(for: id)
-                    await applySecondaryInputs(for: id, modeID: preferred)
+                    await applySecondaryInputs(for: id, modeID: profile.baseModeID)
                 } else {
                     if let r = devices[id] { refreshKnownController(for: r) }
                     await failVirtualHID(for: id)
@@ -251,6 +262,7 @@ extension BridgeCoordinator {
             activityTracker.remove(id)
             rumbleRefreshBoxes[id]?.cancel()
             rumbleRefreshBoxes[id] = nil
+            mappingSpecBoxes[id] = nil
             testRumbleTasks[id]?.cancel()
             testRumbleTasks[id] = nil
             // Preserve a .failed marking (VHID failure, connect timeout) so

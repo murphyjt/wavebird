@@ -22,6 +22,12 @@ struct KnownController: Codable, Sendable, Hashable {
     // configure it from the offline sheet and have it apply on next connect.
     // Nil means "use the global default at .ready time".
     var preferredOutputModeID: String? = nil
+    // Per-serial mapping-profile selection ("default.<modeID>" or a custom
+    // profile's UUID string). Optional so pre-profiles blobs still decode.
+    // When nil, preferredOutputModeID (the pre-profiles field, never rewritten
+    // or removed — downgrades keep working) is interpreted as that mode's
+    // default profile via resolvedProfileID.
+    var preferredProfileID: String? = nil
     // True if an LTK exchange completed for this serial on this host, or if
     // the controller's flash already had this host's entry when first saved.
     // False if WaveBird has only saved a profile preference without pairing.
@@ -32,4 +38,11 @@ struct KnownController: Codable, Sendable, Hashable {
     // whole dict decodes at once; a missing non-optional key would wipe it).
     // Cleared by forgetting the controller. nil/false both mean "may prompt".
     var suppressPairingPrompt: Bool? = nil
+
+    // The profile selection to honor: the new field wins; the legacy mode
+    // preference is read as its default profile (migration by interpretation).
+    var resolvedProfileID: String? {
+        preferredProfileID
+            ?? preferredOutputModeID.map { MappingProfile.defaultProfileID(forModeID: $0) }
+    }
 }
