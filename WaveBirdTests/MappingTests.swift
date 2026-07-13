@@ -179,3 +179,110 @@ struct MappingTransformTests {
         #expect(out.shoulders.rightBumper)
     }
 }
+
+struct MappingProfileTests {
+
+    @Test func roundTripsThroughJSON() throws {
+        let profile = MappingProfile(
+            id: UUID().uuidString,
+            name: "Grips as bumpers",
+            baseModeID: "xboxSeries",
+            mapping: ["xboxSeries.leftBumper": .physical(.gl),
+                      "xboxSeries.guide": .off]
+        )
+        let data = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(MappingProfile.self, from: data)
+        #expect(decoded == profile)
+    }
+
+    @Test func defaultProfileResolvesToIdentity() {
+        let profile = MappingProfile(id: MappingProfile.defaultProfileID(forModeID: "xboxSeries"),
+                                     name: "Xbox Wireless Controller",
+                                     baseModeID: "xboxSeries",
+                                     mapping: [:])
+        #expect(profile.isBuiltIn)
+        #expect(ResolvedMappingSpec.resolve(profile: profile).isDefault)
+    }
+
+    @Test func customMappingResolvesOverrides() {
+        let profile = MappingProfile(
+            id: UUID().uuidString,
+            name: "Test",
+            baseModeID: "xboxSeries",
+            mapping: ["xboxSeries.a": .physical(.gl),
+                      "xboxSeries.guide": .off,
+                      "xboxSeries.unknownRow": .physical(.gr)]  // stale ID: ignored
+        )
+        let spec = ResolvedMappingSpec.resolve(profile: profile)
+        #expect(spec.overrides.count == 2)
+    }
+
+    @Test func mappingChoiceEncodesAsBareJSONString() throws {
+        // The store's on-disk format depends on MappingChoice serializing as
+        // its raw string (stdlib RawRepresentable Codable path), not SE-0295
+        // keyed form like {"physical":"gl"}.
+        #expect(String(data: try JSONEncoder().encode(MappingChoice.physical(.gl)), encoding: .utf8) == "\"gl\"")
+        #expect(String(data: try JSONEncoder().encode(MappingChoice.off), encoding: .utf8) == "\"off\"")
+    }
+}
+
+@MainActor
+struct MappingProfileStoreTests {
+
+    private func makeStore() -> MappingProfileStore {
+        let defaults = UserDefaults(suiteName: "MappingProfileStoreTests")!
+        defaults.removePersistentDomain(forName: "MappingProfileStoreTests")
+        return MappingProfileStore(defaults: defaults)
+    }
+
+    @Test func builtInsCoverShippingModes() {
+        let store = makeStore()
+        let ids = Set(store.builtInProfiles.map(\.baseModeID))
+        #expect(HIDOutputCatalog.allowListIDs.isSubset(of: ids))
+        #expect(store.builtInProfiles.allSatisfy { $0.isBuiltIn && $0.mapping.isEmpty })
+    }
+
+    @Test func upsertPersistsAndReloads() {
+        let defaults = UserDefaults(suiteName: "MappingProfileStoreTests")!
+        defaults.removePersistentDomain(forName: "MappingProfileStoreTests")
+        let store = MappingProfileStore(defaults: defaults)
+        let profile = MappingProfile(id: UUID().uuidString, name: "Mine",
+                                     baseModeID: "dualSense",
+                                     mapping: ["dualSense.l2": .physical(.gl)])
+        store.upsert(profile)
+        let reloaded = MappingProfileStore(defaults: defaults)
+        #expect(reloaded.profile(id: profile.id) == profile)
+    }
+
+    @Test func corruptRecordIsDroppedOthersSurvive() throws {
+        let defaults = UserDefaults(suiteName: "MappingProfileStoreTests")!
+        defaults.removePersistentDomain(forName: "MappingProfileStoreTests")
+        let good = MappingProfile(id: "good-id", name: "Good", baseModeID: "switchPro", mapping: [:])
+        let dict: [String: Data] = [
+            "good-id": try JSONEncoder().encode(good),
+            "bad-id": Data("not json".utf8),
+        ]
+        defaults.set(dict, forKey: MappingProfileStore.defaultsKey)
+        let store = MappingProfileStore(defaults: defaults)
+        #expect(store.customProfiles.count == 1)
+        #expect(store.profile(id: "good-id") != nil)
+    }
+
+    @Test func deleteReturnsBaseDefaultFallback() {
+        let store = makeStore()
+        let profile = MappingProfile(id: UUID().uuidString, name: "Doomed",
+                                     baseModeID: "xboxSeries", mapping: [:])
+        store.upsert(profile)
+        let fallback = store.delete(id: profile.id)
+        #expect(fallback == "default.xboxSeries")
+        #expect(store.profile(id: profile.id) == nil)
+        #expect(store.delete(id: "never-existed") == nil)
+    }
+
+    @Test func bareLegacyModeIDResolvesToDefaultProfile() {
+        let store = makeStore()
+        let profile = store.profile(id: "xboxSeries")
+        #expect(profile?.id == "default.xboxSeries")
+        #expect(profile?.baseModeID == "xboxSeries")
+    }
+}
