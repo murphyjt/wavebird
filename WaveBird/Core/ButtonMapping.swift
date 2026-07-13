@@ -145,3 +145,93 @@ struct OutputControl: Sendable, Identifiable, Hashable {
     let displayName: String
     let driver: ControlDriver
 }
+
+// A profile's mapping compiled against its base mode's control catalog.
+// Only non-Default rows become overrides: Default rows need no entry because
+// the untouched state already carries the parser's wiring (copy-through).
+// Empty overrides == the stock profile — the transform is a guaranteed no-op
+// so the default hot path stays bit-exact.
+struct ResolvedMappingSpec: Sendable {
+    enum Source: Sendable, Hashable {
+        case off
+        case physical(PhysicalButton)
+    }
+
+    struct Override: Sendable {
+        let driver: ControlDriver
+        let source: Source
+    }
+
+    let overrides: [Override]
+    var isDefault: Bool { overrides.isEmpty }
+
+    static let identity = ResolvedMappingSpec(overrides: [])
+}
+
+extension ControllerState {
+    // Pre-encode rewrite: runs in the dispatch task after invertingY, before
+    // buildReport. Reads presses from the ORIGINAL state, writes into a copy —
+    // so "A ← ZL" still lets physical ZL drive its own default row too
+    // (duplicates allowed, no swap inference).
+    func applyingMapping(_ spec: ResolvedMappingSpec) -> ControllerState {
+        guard !spec.isDefault else { return self }
+        var out = self
+        for override in spec.overrides {
+            Self.clear(override.driver, in: &out)
+        }
+        for override in spec.overrides {
+            guard case .physical(let button) = override.source,
+                  buttons.contains(button.buttonSetMember) else { continue }
+            Self.set(override.driver, in: &out)
+        }
+        return out
+    }
+
+    private static func clear(_ driver: ControlDriver, in state: inout ControllerState) {
+        switch driver {
+        case .buttons(let members):
+            state.buttons.subtract(members)
+        case .leftBumper:
+            state.shoulders.leftBumper = false
+        case .rightBumper:
+            state.shoulders.rightBumper = false
+        case .leftTrigger:
+            state.shoulders.leftTriggerDigital = false
+            state.shoulders.leftTriggerAnalog = 0
+        case .rightTrigger:
+            state.shoulders.rightTriggerDigital = false
+            state.shoulders.rightTriggerAnalog = 0
+        }
+    }
+
+    private static func set(_ driver: ControlDriver, in state: inout ControllerState) {
+        switch driver {
+        case .buttons(let members):
+            state.buttons.formUnion(members)
+        case .leftBumper:
+            state.shoulders.leftBumper = true
+        case .rightBumper:
+            state.shoulders.rightBumper = true
+        case .leftTrigger:
+            state.shoulders.leftTriggerDigital = true
+            state.shoulders.leftTriggerAnalog = 0xFF
+        case .rightTrigger:
+            state.shoulders.rightTriggerDigital = true
+            state.shoulders.rightTriggerAnalog = 0xFF
+        }
+    }
+}
+
+// Live-updatable spec shared between the main actor (profile edits) and a
+// device's off-main dispatch task, which samples `current` per report — the
+// same lock-guarded-snapshot idiom as AxisSettings/RumbleSettings.
+final class MappingSpecBox: Sendable {
+    private let lock: OSAllocatedUnfairLock<ResolvedMappingSpec>
+
+    init(_ initial: ResolvedMappingSpec = .identity) {
+        lock = OSAllocatedUnfairLock(initialState: initial)
+    }
+
+    var current: ResolvedMappingSpec { lock.withLock { $0 } }
+    func update(_ spec: ResolvedMappingSpec) { lock.withLock { $0 = spec } }
+}
