@@ -135,10 +135,22 @@ struct ProfileDetailPane: View {
 
     private func choiceBinding(_ controlID: String) -> Binding<String> {
         Binding(
-            get: { draft.mapping[controlID]?.rawValue ?? "default" },
+            get: {
+                switch draft.mapping[controlID] {
+                case .none: "default"
+                case .off: "off"
+                case .sources(let sources): sources.first?.token ?? "default"
+                }
+            },
             set: { raw in
-                if raw == "default" { draft.mapping[controlID] = nil }
-                else { draft.mapping[controlID] = MappingChoice(rawValue: raw) }
+                switch raw {
+                case "default": draft.mapping[controlID] = nil
+                case "off": draft.mapping[controlID] = .off
+                default:
+                    if let source = MappingSource(token: raw) {
+                        draft.mapping[controlID] = .sources([source])
+                    }
+                }
                 commit()
             }
         )

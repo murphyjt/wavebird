@@ -56,9 +56,10 @@ extension ResolvedMappingSpec {
             guard let choice = profile.mapping[control.id] else { continue }
             switch choice {
             case .off:
-                overrides.append(Override(driver: control.driver, source: .off))
-            case .physical(let button):
-                overrides.append(Override(driver: control.driver, source: .physical(button)))
+                overrides.append(Override(driver: control.driver, sources: []))
+            case .sources(let sources):
+                guard !sources.isEmpty else { continue }   // empty = Default (defensive)
+                overrides.append(Override(driver: control.driver, sources: sources))
             }
         }
         return ResolvedMappingSpec(overrides: overrides,
