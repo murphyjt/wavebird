@@ -50,6 +50,6 @@ struct SettingsView: View {
             ProfilesSettingsTab(coordinator: coordinator)
                 .tabItem { Label("Profiles", systemImage: "gamecontroller") }
         }
-        .frame(width: 480, height: 400)
+        .frame(minWidth: 700, idealWidth: 720, minHeight: 480, idealHeight: 540)
     }
 }
