@@ -380,3 +380,48 @@ struct MappingSpecTransformTests {
         #expect(st.applyingMapping(spec).leftStick == SIMD2<Int16>(100, 200))
     }
 }
+
+struct MappingSourceTests {
+
+    @Test func tokensRoundTrip() {
+        for button in PhysicalButton.allCases {
+            let src = MappingSource.button(button)
+            #expect(MappingSource(token: src.token) == src)
+        }
+        #expect(MappingSource(token: "analogL") == .leftAnalogTrigger)
+        #expect(MappingSource(token: "analogR") == .rightAnalogTrigger)
+        #expect(MappingSource.leftAnalogTrigger.token == "analogL")
+        #expect(MappingSource.rightAnalogTrigger.token == "analogR")
+    }
+
+    @Test func unknownAndSentinelTokensAreNil() {
+        #expect(MappingSource(token: "off") == nil)
+        #expect(MappingSource(token: "default") == nil)
+        #expect(MappingSource(token: "nonsense") == nil)
+    }
+
+    @Test func metadataForAnalogSources() {
+        #expect(MappingSource.leftAnalogTrigger.displayName == "Left Trigger (Analog)")
+        #expect(MappingSource.leftAnalogTrigger.family == .gameCube)
+        #expect(MappingSource.button(.gl).displayName == "GL Button")
+        #expect(MappingSource.button(.gl).family == .pro)
+    }
+
+    @Test func buttonSourceReadsButtonSet() {
+        var s = ControllerState.zero
+        s.buttons = [.gl]
+        #expect(MappingSource.button(.gl).isPressed(in: s))
+        #expect(!MappingSource.button(.gr).isPressed(in: s))
+        #expect(MappingSource.button(.gl).analogValue(in: s) == 0xFF)
+        #expect(MappingSource.button(.gr).analogValue(in: s) == 0)
+    }
+
+    @Test func analogSourceReadsShoulderTravel() {
+        var s = ControllerState.zero
+        s.shoulders = StandardShoulders(leftTriggerAnalog: 0x80)
+        #expect(MappingSource.leftAnalogTrigger.analogValue(in: s) == 0x80)
+        #expect(MappingSource.leftAnalogTrigger.isPressed(in: s))
+        #expect(MappingSource.rightAnalogTrigger.analogValue(in: s) == 0)
+        #expect(!MappingSource.rightAnalogTrigger.isPressed(in: s))
+    }
+}
