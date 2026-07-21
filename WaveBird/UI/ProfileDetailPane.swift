@@ -8,6 +8,8 @@ struct ProfileDetailPane: View {
     let coordinator: BridgeCoordinator
     @State private var draft: MappingProfile
     @State private var pendingBaseChange: String?
+    @State private var showLeftStickOptions = false
+    @State private var showRightStickOptions = false
 
     init(coordinator: BridgeCoordinator, profile: MappingProfile) {
         self.coordinator = coordinator
@@ -70,11 +72,11 @@ struct ProfileDetailPane: View {
                     }
                     .disabled(isReadOnly)
                 }
-            }
 
-            Section("Sticks") {
-                stickControls("Left Stick", transform: $draft.leftStick)
-                stickControls("Right Stick", transform: $draft.rightStick)
+                stickRow("Left Stick", systemImage: "l.joystick",
+                         transform: $draft.leftStick, isPresented: $showLeftStickOptions)
+                stickRow("Right Stick", systemImage: "r.joystick",
+                         transform: $draft.rightStick, isPresented: $showRightStickOptions)
             }
         }
         .formStyle(.grouped)
@@ -142,26 +144,54 @@ struct ProfileDetailPane: View {
         )
     }
 
-    @ViewBuilder
-    private func stickControls(_ title: String, transform: Binding<StickTransform>) -> some View {
-        DisclosureGroup(title) {
-            Toggle("Invert Horizontally", isOn: transform.invertX)
-                .onChange(of: transform.wrappedValue.invertX) { commit() }
-            Toggle("Invert Vertically", isOn: transform.invertY)
-                .onChange(of: transform.wrappedValue.invertY) { commit() }
-            Picker("Rotate", selection: transform.rotation) {
-                Text("0°").tag(StickRotation.none)
-                Text("90°").tag(StickRotation.cw90)
-                Text("180°").tag(StickRotation.deg180)
-                Text("270°").tag(StickRotation.ccw90)
+    // Compact stick row: [glyph] title ........ ⓘ, transforms in a popover
+    // (matching the macOS Game Controllers editor) rather than an inline group.
+    private func stickRow(_ title: String, systemImage: String,
+                          transform: Binding<StickTransform>,
+                          isPresented: Binding<Bool>) -> some View {
+        LabeledContent {
+            Button { isPresented.wrappedValue = true } label: {
+                Image(systemName: "info.circle")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(isReadOnly)
+            .popover(isPresented: isPresented, arrowEdge: .trailing) {
+                stickOptions(transform)
+            }
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
+    }
+
+    private func stickOptions(_ transform: Binding<StickTransform>) -> some View {
+        Form {
+            Toggle(isOn: transform.invertX) {
+                Label("Invert Horizontally", systemImage: "arrow.left.and.right.circle")
+            }
+            .onChange(of: transform.wrappedValue.invertX) { commit() }
+            Toggle(isOn: transform.invertY) {
+                Label("Invert Vertically", systemImage: "arrow.up.and.down.circle")
+            }
+            .onChange(of: transform.wrappedValue.invertY) { commit() }
+            Picker(selection: transform.rotation) {
+                Text("None").tag(StickRotation.none)
+                Text("Left").tag(StickRotation.ccw90)
+                Text("Right").tag(StickRotation.cw90)
+            } label: {
+                Label("Rotate Input", systemImage: "arrow.clockwise.circle")
             }
             .onChange(of: transform.wrappedValue.rotation) { commit() }
         }
-        .disabled(isReadOnly)
+        .formStyle(.grouped)
+        .frame(width: 320, height: 134)
     }
 
     private func commit() {
         guard !isReadOnly, !draft.name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        // Don't let an onDisappear flush resurrect a profile deleted out from under us.
+        guard coordinator.mappingProfiles.profile(id: draft.id) != nil else { return }
         coordinator.mappingProfiles.upsert(draft)
         coordinator.mappingProfileDidChange(draft.id)
     }

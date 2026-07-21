@@ -13,7 +13,19 @@ enum MappingControlSymbols {
         "a": "a.circle", "b": "b.circle", "x": "x.circle", "y": "y.circle",
         // PlayStation shapes
         "cross": "xmark", "circle": "circle", "square": "square", "triangle": "triangle",
-        // D-pad + stick clicks
+        // Stick clicks
         "l3": "l.joystick.press.down", "r3": "r.joystick.press.down",
+        // Xbox shoulders + triggers
+        "leftBumper": "lb.rectangle.roundedbottom", "rightBumper": "rb.rectangle.roundedbottom",
+        "leftTrigger": "lt.rectangle.roundedtop", "rightTrigger": "rt.rectangle.roundedtop",
+        // PlayStation shoulders + triggers
+        "l1": "l1.rectangle.roundedbottom", "r1": "r1.rectangle.roundedbottom",
+        "l2": "l2.rectangle.roundedtop", "r2": "r2.rectangle.roundedtop",
+        // Switch Pro shoulders + triggers
+        "l": "l.rectangle.roundedbottom", "r": "r.rectangle.roundedbottom",
+        "zl": "zl.rectangle.roundedtop", "zr": "zr.rectangle.roundedtop",
+        // Switch Pro system buttons
+        "plus": "plus.circle", "minus": "minus.circle",
+        "home": "house.circle", "capture": "square.circle",
     ]
 }

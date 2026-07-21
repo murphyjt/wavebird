@@ -18,6 +18,7 @@ struct ProfileSymbolPicker: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .frame(width: cell, height: cell)
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .background(Circle().fill(Color.secondary.opacity(0.15)))
@@ -38,6 +39,7 @@ struct ProfileSymbolPicker: View {
                     Image(systemName: name)
                         .frame(width: cell, height: cell)
                         .foregroundStyle(name == symbolName ? tint : .primary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -52,6 +54,7 @@ struct ProfileSymbolPicker: View {
             Image(systemName: name)
                 .foregroundStyle(name == symbolName ? tint : .primary)
                 .frame(width: cell, height: cell)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .background(
