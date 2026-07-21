@@ -230,11 +230,11 @@ extension ControllerState {
                 state.shoulders.rightBumper = true
             }
         case .leftTrigger:
-            let value = sources.map { $0.analogValue(in: input) }.max() ?? 0
+            let value = sources.reduce(UInt8(0)) { max($0, $1.analogValue(in: input)) }
             state.shoulders.leftTriggerAnalog = value
             state.shoulders.leftTriggerDigital = (value == 0xFF)
         case .rightTrigger:
-            let value = sources.map { $0.analogValue(in: input) }.max() ?? 0
+            let value = sources.reduce(UInt8(0)) { max($0, $1.analogValue(in: input)) }
             state.shoulders.rightTriggerAnalog = value
             state.shoulders.rightTriggerDigital = (value == 0xFF)
         }
