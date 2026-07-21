@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import Testing
 @testable import WaveBird
@@ -74,22 +73,24 @@ struct MappingControlSymbolsTests {
     @Test func faceButtonsMapToGlyphs() {
         #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.a") == "a.circle")
         #expect(MappingControlSymbols.symbol(forControlID: "switchPro.y") == "y.circle")
-        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.cross") == "xmark")
-        #expect(MappingControlSymbols.symbol(forControlID: "dualSense.triangle") == "triangle")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.cross") == "xmark.circle")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualSense.triangle") == "triangle.circle")
     }
 
     @Test func xboxSystemButtonsMapToGlyphs() {
-        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.view") == "square.on.square")
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.view") == "rectangle.on.rectangle")
         #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.menu") == "line.3.horizontal")
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.guide") == "xbox.logo")
         #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.share") == "square.and.arrow.up")
     }
 
-    // Guide resolves to whichever Xbox-logo name the running OS ships (SF Symbols 8
-    // renamed logo.xbox → xbox.logo); either way it must be a real, rendering glyph.
-    @Test func xboxGuideResolvesToAnAvailableLogo() throws {
-        let name = try #require(MappingControlSymbols.symbol(forControlID: "xboxSeries.guide"))
-        #expect(name == "xbox.logo" || name == "logo.xbox")
-        #expect(NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil)
+    @Test func playStationSystemButtonsMapToGlyphs() {
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.circle") == "circle.circle")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.square") == "square.circle")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.options") == "line.3.horizontal")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.ps") == "playstation.logo")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualSense.create") == "square.and.arrow.up")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualSense.ps") == "playstation.logo")
     }
 
     @Test func unmappedControlFallsBackToNil() {
