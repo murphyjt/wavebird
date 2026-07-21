@@ -1,16 +1,14 @@
 import SwiftUI
 
-// The dedicated Profiles window, Safari-style: selectable profile list on the
-// left, live-editing detail on the right. Defaults are read-only and
-// undeletable; customs are editable and deletable (referencing controllers fall
-// back to the base mode's default profile). As the window root, NavigationSplitView
-// owns the toolbar, so the standard sidebar toggle collapses/reopens correctly —
-// which it can't when nested under the Settings TabView.
+// The dedicated Profiles window: profile list on the left, live-editing detail on
+// the right. Lives in its own window (not the Settings TabView) because a nested
+// NavigationSplitView can't own the toolbar, which breaks the sidebar toggle.
 struct ProfilesView: View {
     let coordinator: BridgeCoordinator
 
     @State private var selectedProfileID: String?
     @State private var pendingDelete: MappingProfile?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var store: MappingProfileStore { coordinator.mappingProfiles }
     private var selectedProfile: MappingProfile? {
@@ -21,7 +19,7 @@ struct ProfilesView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 320)
         } detail: {
@@ -63,35 +61,20 @@ struct ProfilesView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { footerBar }
-    }
-
-    private var footerBar: some View {
-        VStack(spacing: 0) {
-            Divider()
-            HStack(spacing: 0) {
-                Button(action: addProfile) {
-                    Image(systemName: "plus")
-                        .frame(width: 30, height: 24)
-                        .contentShape(Rectangle())
+        // .navigation lands the group just right of the sidebar toggle — a group
+        // placed left of it gets split by macOS. Gated on columnVisibility so it
+        // hides when the sidebar is collapsed.
+        .toolbar {
+            if columnVisibility != .detailOnly {
+                ToolbarItemGroup(placement: .navigation) {
+                    Button("New Profile", systemImage: "plus", action: addProfile)
+                        .help("New Profile")
+                    Button("Delete Profile", systemImage: "minus", action: deleteSelected)
+                        .disabled(!selectedIsCustom)
+                        .help("Delete Profile")
                 }
-                .buttonStyle(.plain)
-                .help("New Profile")
-                Divider().frame(height: 14)
-                Button(action: deleteSelected) {
-                    Image(systemName: "minus")
-                        .frame(width: 30, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!selectedIsCustom)
-                .help("Delete Profile")
-                Spacer()
             }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
         }
-        .background(.bar)
     }
 
     @ViewBuilder
@@ -100,8 +83,8 @@ struct ProfilesView: View {
             ProfileDetailPane(coordinator: coordinator, profile: profile)
                 .id(profile.id)
         } else {
-            Text("Select a profile")
-                .foregroundStyle(.secondary)
+            ContentUnavailableView("No Profile Selected", systemImage: "gamecontroller",
+                                   description: Text("Select a profile from the sidebar to edit it."))
         }
     }
 
