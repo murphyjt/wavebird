@@ -71,6 +71,11 @@ struct ProfileDetailPane: View {
                     .disabled(isReadOnly)
                 }
             }
+
+            Section("Sticks") {
+                stickControls("Left Stick", transform: $draft.leftStick)
+                stickControls("Right Stick", transform: $draft.rightStick)
+            }
         }
         .formStyle(.grouped)
         .onDisappear { commit() }
@@ -133,6 +138,24 @@ struct ProfileDetailPane: View {
                 commit()
             }
         )
+    }
+
+    @ViewBuilder
+    private func stickControls(_ title: String, transform: Binding<StickTransform>) -> some View {
+        DisclosureGroup(title) {
+            Toggle("Invert Horizontally", isOn: transform.invertX)
+                .onChange(of: transform.wrappedValue.invertX) { commit() }
+            Toggle("Invert Vertically", isOn: transform.invertY)
+                .onChange(of: transform.wrappedValue.invertY) { commit() }
+            Picker("Rotate", selection: transform.rotation) {
+                Text("0°").tag(StickRotation.none)
+                Text("90°").tag(StickRotation.cw90)
+                Text("180°").tag(StickRotation.deg180)
+                Text("270°").tag(StickRotation.ccw90)
+            }
+            .onChange(of: transform.wrappedValue.rotation) { commit() }
+        }
+        .disabled(isReadOnly)
     }
 
     private func commit() {
