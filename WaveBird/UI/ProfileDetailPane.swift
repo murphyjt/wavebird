@@ -144,9 +144,8 @@ struct ProfileDetailPane: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MappingRowButtonStyle())
             .disabled(isReadOnly)
             .popover(isPresented: Binding(
                 get: { activeMappingControlID == control.id },
@@ -192,6 +191,9 @@ struct ProfileDetailPane: View {
         }
         .formStyle(.grouped)
         .frame(width: 320, height: 420)
+        // The popover's default vibrancy makes the list see-through against the
+        // content behind it; force an opaque window-background fill.
+        .presentationBackground(Color(nsColor: .windowBackgroundColor))
     }
 
     private func optionRow(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
@@ -203,9 +205,8 @@ struct ProfileDetailPane: View {
                     Image(systemName: "checkmark").foregroundStyle(.tint)
                 }
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MappingRowButtonStyle())
     }
 
     private func summary(for controlID: String) -> String {
@@ -301,5 +302,17 @@ struct ProfileDetailPane: View {
         guard coordinator.mappingProfiles.profile(id: draft.id) != nil else { return }
         coordinator.mappingProfiles.upsert(draft)
         coordinator.mappingProfileDidChange(draft.id)
+    }
+}
+
+// A tappable full-row style that keeps the label in the primary color — .plain
+// mutes it to a grey control color inside a grouped Form. Inner .tint/.secondary
+// on the checkmark/chevron still win, so only the row text is forced primary.
+private struct MappingRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.primary)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.4 : 1)
     }
 }
