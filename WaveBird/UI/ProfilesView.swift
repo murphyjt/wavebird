@@ -27,6 +27,18 @@ struct ProfilesView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 640, minHeight: 460)
+        // Window-scoped ⌘D on the selection. A zero-opacity button registers the
+        // shortcut without an app-menu command (this app's menu shortcuts are a
+        // known landmine — see CLAUDE.md).
+        .background {
+            Button("Duplicate Profile") {
+                if let profile = selectedProfile { duplicate(profile) }
+            }
+            .keyboardShortcut("d", modifiers: .command)
+            .disabled(selectedProfile == nil)
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
         .onAppear { reconcileSelection() }
         .confirmationDialog(
             "Delete “\(pendingDelete?.name ?? "")”?",
@@ -53,12 +65,7 @@ struct ProfilesView: View {
                 ForEach(store.builtInProfiles) { row($0) }
             }
             Section("Custom") {
-                ForEach(store.customProfiles) { profile in
-                    row(profile)
-                        .contextMenu {
-                            Button("Delete…", role: .destructive) { pendingDelete = profile }
-                        }
-                }
+                ForEach(store.customProfiles) { row($0) }
             }
         }
         // .navigation lands the group just right of the sidebar toggle — a group
@@ -103,6 +110,16 @@ struct ProfilesView: View {
             }
         }
         .tag(profile.id)
+        .contextMenu {
+            Button("Duplicate") { duplicate(profile) }
+            if !profile.isBuiltIn {
+                Button("Delete…", role: .destructive) { pendingDelete = profile }
+            }
+        }
+    }
+
+    private func duplicate(_ profile: MappingProfile) {
+        selectedProfileID = store.duplicate(profile).id
     }
 
     private func addProfile() {

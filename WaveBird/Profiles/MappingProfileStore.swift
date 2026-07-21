@@ -46,6 +46,29 @@ final class MappingProfileStore {
         persist()
     }
 
+    // Creates an editable custom copy of any profile (built-in or custom): a
+    // fresh UUID so it's a custom, a Finder-style deduped " copy" name, and
+    // everything else carried over.
+    @discardableResult
+    func duplicate(_ source: MappingProfile) -> MappingProfile {
+        var copy = source
+        copy.id = UUID().uuidString
+        copy.name = uniqueCopyName(basedOn: source.name)
+        upsert(copy)
+        return copy
+    }
+
+    private func uniqueCopyName(basedOn name: String) -> String {
+        // Strip a trailing " copy"/" copy N" so duplicating a copy bumps the
+        // number instead of stacking "copy copy".
+        let root = name.replacing(/\ copy( \d+)?$/, with: "")
+        let taken = Set(customProfiles.map(\.name)).union(builtInProfiles.map(\.name))
+        guard taken.contains("\(root) copy") else { return "\(root) copy" }
+        var n = 2
+        while taken.contains("\(root) copy \(n)") { n += 1 }
+        return "\(root) copy \(n)"
+    }
+
     // Removes a custom profile. Returns the well-known ID of its base mode's
     // default profile so the coordinator can rewrite references (same VHID
     // identity, stock mapping), or nil if the ID wasn't a stored custom.

@@ -315,6 +315,45 @@ struct MappingProfileStoreTests {
         #expect(profile?.id == "default.xboxSeries")
         #expect(profile?.baseModeID == "xboxSeries")
     }
+
+    @Test func duplicateMakesEditableCustomCarryingFields() {
+        let store = makeStore()
+        var base = MappingProfile(id: UUID().uuidString, name: "Custom", baseModeID: "xboxSeries",
+                                  mapping: ["xboxSeries.a": .sources([.button(.gl)])])
+        base.useNintendoLayout = true
+        base.colorID = "red"
+        store.upsert(base)
+
+        let copy = store.duplicate(base)
+        #expect(!copy.isBuiltIn)
+        #expect(copy.id != base.id)
+        #expect(copy.baseModeID == base.baseModeID)
+        #expect(copy.mapping == base.mapping)
+        #expect(copy.useNintendoLayout)
+        #expect(copy.colorID == "red")
+        #expect(store.profile(id: copy.id) == copy)
+    }
+
+    @Test func duplicateOfBuiltInBecomesCustom() {
+        let store = makeStore()
+        let builtIn = store.profile(id: "default.xboxSeries")!
+        let copy = store.duplicate(builtIn)
+        #expect(!copy.isBuiltIn)
+        #expect(copy.name == "\(builtIn.name) copy")
+    }
+
+    @Test func duplicateNamesDedupeAndStripCopySuffix() {
+        let store = makeStore()
+        let base = MappingProfile(id: UUID().uuidString, name: "GC", baseModeID: "xboxSeries")
+        store.upsert(base)
+        let c1 = store.duplicate(base)
+        #expect(c1.name == "GC copy")
+        let c2 = store.duplicate(base)
+        #expect(c2.name == "GC copy 2")
+        // Duplicating a copy bumps the number instead of stacking "copy copy".
+        let c3 = store.duplicate(c1)
+        #expect(c3.name == "GC copy 3")
+    }
 }
 
 struct StickTransformTests {
