@@ -454,3 +454,61 @@ struct MappingSourceTests {
         #expect(!MappingSource.rightAnalogTrigger.isPressed(in: s))
     }
 }
+
+struct NintendoLayoutTests {
+
+    @Test func fieldRoundTripsAndDefaultsFalse() throws {
+        var profile = MappingProfile(id: "n", name: "GC Xbox", baseModeID: "xboxSeries")
+        profile.useNintendoLayout = true
+        let data = try JSONEncoder().encode(profile)
+        #expect(try JSONDecoder().decode(MappingProfile.self, from: data) == profile)
+
+        // A blob missing the key decodes to false.
+        let legacy = """
+        {"id":"a","name":"Old","baseModeID":"xboxSeries","mapping":{}}
+        """
+        #expect(try JSONDecoder().decode(MappingProfile.self, from: Data(legacy.utf8)).useNintendoLayout == false)
+    }
+
+    @Test func layoutMapDefinedOnlyForXbox() {
+        #expect(MappingControls.nintendoLayoutSources(forModeID: "xboxSeries").count == 4)
+        #expect(MappingControls.nintendoLayoutSources(forModeID: "switchPro").isEmpty)
+        #expect(MappingControls.nintendoLayoutSources(forModeID: "dualShock4").isEmpty)
+        #expect(MappingControls.nintendoLayoutSources(forModeID: "dualSense").isEmpty)
+    }
+
+    @Test func toggleInjectsByLabelDefaultsForXbox() {
+        var profile = MappingProfile(id: "n", name: "GC", baseModeID: "xboxSeries")
+        profile.useNintendoLayout = true
+        let spec = ResolvedMappingSpec.resolve(profile: profile)
+        #expect(!spec.isDefault)
+        #expect(spec.overrides.count == 4)
+        // Xbox A output (driver .buttons(.b)) is driven by Nintendo A.
+        var st = ControllerState.zero
+        st.buttons = [.a]
+        #expect(st.applyingMapping(spec).buttons.contains(.b))    // Nintendo A -> Xbox A (reads .b)
+        var st2 = ControllerState.zero
+        st2.buttons = [.b]
+        #expect(st2.applyingMapping(spec).buttons.contains(.a))   // Nintendo B -> Xbox B (reads .a)
+    }
+
+    @Test func userOverrideWinsOverToggle() {
+        var profile = MappingProfile(id: "n", name: "GC", baseModeID: "xboxSeries")
+        profile.useNintendoLayout = true
+        profile.mapping = ["xboxSeries.a": .sources([.button(.gl)])]
+        let spec = ResolvedMappingSpec.resolve(profile: profile)
+        // 1 explicit override for .a + 3 injected by-label (b/x/y) = 4, no duplicate for .a.
+        #expect(spec.overrides.count == 4)
+        var st = ControllerState.zero
+        st.buttons = [.gl]
+        #expect(st.applyingMapping(spec).buttons.contains(.b))    // Xbox A still driven by GL, not Nintendo A
+    }
+
+    @Test func toggleIsNoOpForIdentityAndOptedOutModes() {
+        for mode in ["switchPro", "dualShock4", "dualSense"] {
+            var profile = MappingProfile(id: "n", name: "x", baseModeID: mode)
+            profile.useNintendoLayout = true
+            #expect(ResolvedMappingSpec.resolve(profile: profile).isDefault)
+        }
+    }
+}

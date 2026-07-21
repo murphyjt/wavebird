@@ -11,6 +11,23 @@ enum MappingControls {
         table[id] ?? []
     }
 
+    // Nintendo-label source for each diamond face control, per output mode whose
+    // diamond differs from Nintendo's. Empty for modes that are already identity
+    // (switchPro) or opted out (PlayStation). Used to inject by-label defaults
+    // when a profile's useNintendoLayout is on.
+    static func nintendoLayoutSources(forModeID id: String) -> [String: MappingSource] {
+        nintendoLayout[id] ?? [:]
+    }
+
+    private static let nintendoLayout: [String: [String: MappingSource]] = [
+        "xboxSeries": [
+            "xboxSeries.a": .button(.a),
+            "xboxSeries.b": .button(.b),
+            "xboxSeries.x": .button(.x),
+            "xboxSeries.y": .button(.y),
+        ],
+    ]
+
     private static let table: [String: [OutputControl]] = [
         "xboxSeries": [
             OutputControl(id: "xboxSeries.a",            displayName: "A Button",         driver: .buttons(.b)),

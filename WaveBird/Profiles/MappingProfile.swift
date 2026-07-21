@@ -13,6 +13,7 @@ struct MappingProfile: Codable, Sendable, Hashable, Identifiable {
     var colorID: String? = nil      // ProfileColor rawValue; nil/unknown → base default
     var leftStick: StickTransform = .init()
     var rightStick: StickTransform = .init()
+    var useNintendoLayout: Bool = false
 
     static let defaultIDPrefix = "default."
 
@@ -29,7 +30,7 @@ struct MappingProfile: Codable, Sendable, Hashable, Identifiable {
 // compiler-synthesized memberwise initializer existing call sites rely on.
 extension MappingProfile {
     enum CodingKeys: String, CodingKey {
-        case id, name, baseModeID, mapping, symbolName, colorID, leftStick, rightStick
+        case id, name, baseModeID, mapping, symbolName, colorID, leftStick, rightStick, useNintendoLayout
     }
 
     init(from decoder: any Decoder) throws {
@@ -42,6 +43,7 @@ extension MappingProfile {
         colorID = try c.decodeIfPresent(String.self, forKey: .colorID)
         leftStick = try c.decodeIfPresent(StickTransform.self, forKey: .leftStick) ?? .init()
         rightStick = try c.decodeIfPresent(StickTransform.self, forKey: .rightStick) ?? .init()
+        useNintendoLayout = try c.decodeIfPresent(Bool.self, forKey: .useNintendoLayout) ?? false
     }
 }
 
@@ -60,6 +62,15 @@ extension ResolvedMappingSpec {
             case .sources(let sources):
                 guard !sources.isEmpty else { continue }   // empty = Default (defensive)
                 overrides.append(Override(driver: control.driver, sources: sources))
+            }
+        }
+        if profile.useNintendoLayout {
+            let byLabel = MappingControls.nintendoLayoutSources(forModeID: profile.baseModeID)
+            for control in controls {
+                guard let source = byLabel[control.id],          // a diamond face control
+                      profile.mapping[control.id] == nil         // still Default (not user-overridden)
+                else { continue }
+                overrides.append(Override(driver: control.driver, sources: [source]))
             }
         }
         return ResolvedMappingSpec(overrides: overrides,
