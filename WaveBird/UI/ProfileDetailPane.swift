@@ -7,6 +7,7 @@ import SwiftUI
 struct ProfileDetailPane: View {
     let coordinator: BridgeCoordinator
     @State private var draft: MappingProfile
+    @State private var pendingBaseChange: String?
 
     init(coordinator: BridgeCoordinator, profile: MappingProfile) {
         self.coordinator = coordinator
@@ -23,7 +24,7 @@ struct ProfileDetailPane: View {
                     LabeledContent("Name") { Text(draft.name) }
                 } else {
                     TextField("Name", text: $draft.name)
-                        .onChange(of: draft.name) { commit() }
+                        .onSubmit { commit() }
                 }
 
                 LabeledContent("Symbol") {
@@ -40,14 +41,10 @@ struct ProfileDetailPane: View {
                         Text(coordinator.catalog.resolved(id: draft.baseModeID).displayName)
                     }
                 } else {
-                    Picker("Emulates", selection: $draft.baseModeID) {
+                    Picker("Emulates", selection: baseModeBinding) {
                         ForEach(mappableEntries) { entry in
                             Text(entry.displayName).tag(entry.id)
                         }
-                    }
-                    .onChange(of: draft.baseModeID) {
-                        draft.mapping = [:]   // control IDs are mode-prefixed
-                        commit()
                     }
                 }
             }
@@ -72,10 +69,41 @@ struct ProfileDetailPane: View {
             }
         }
         .formStyle(.grouped)
+        .onDisappear { commit() }
+        .confirmationDialog(
+            "Change Emulated Controller?",
+            isPresented: Binding(get: { pendingBaseChange != nil }, set: { if !$0 { pendingBaseChange = nil } })
+        ) {
+            Button("Change Emulated Controller", role: .destructive) {
+                if let newValue = pendingBaseChange {
+                    draft.baseModeID = newValue
+                    draft.mapping = [:]   // control IDs are mode-prefixed
+                    commit()
+                }
+                pendingBaseChange = nil
+            }
+            Button("Cancel", role: .cancel) { pendingBaseChange = nil }
+        } message: {
+            Text("This profile's current button mapping will be cleared.")
+        }
     }
 
     private var mappableEntries: [HIDOutputCatalog.Entry] {
         coordinator.catalog.entries.filter { !MappingControls.controls(forModeID: $0.id).isEmpty }
+    }
+
+    private var baseModeBinding: Binding<String> {
+        Binding(
+            get: { draft.baseModeID },
+            set: { newValue in
+                if draft.mapping.isEmpty {
+                    draft.baseModeID = newValue
+                    commit()
+                } else {
+                    pendingBaseChange = newValue
+                }
+            }
+        )
     }
 
     private var symbolBinding: Binding<String> {

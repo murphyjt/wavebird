@@ -36,10 +36,8 @@ struct ProfilesSettingsTab: View {
                 if let victim = pendingDelete {
                     Task {
                         await coordinator.deleteMappingProfile(victim.id)
-                        await MainActor.run {
-                            if selectedProfileID == victim.id { selectedProfileID = nil }
-                            reconcileSelection()
-                        }
+                        if selectedProfileID == victim.id { selectedProfileID = nil }
+                        reconcileSelection()
                     }
                 }
                 pendingDelete = nil
