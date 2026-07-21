@@ -27,5 +27,8 @@ enum MappingControlSymbols {
         // Switch Pro system buttons
         "plus": "plus.circle", "minus": "minus.circle",
         "home": "house.circle", "capture": "square.circle",
+        // Xbox system buttons (glyphs mirror the printed button icons)
+        "view": "square.on.square", "menu": "line.3.horizontal",
+        "guide": "logo.xbox", "share": "square.and.arrow.up",
     ]
 }
