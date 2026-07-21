@@ -53,6 +53,13 @@ struct ProfileDetailPane: View {
             }
 
             Section("Buttons") {
+                if !MappingControls.nintendoLayoutSources(forModeID: draft.baseModeID).isEmpty {
+                    Toggle("Use Nintendo Button Layout", isOn: Binding(
+                        get: { draft.useNintendoLayout },
+                        set: { draft.useNintendoLayout = $0; commit() }
+                    ))
+                    .disabled(isReadOnly)
+                }
                 ForEach(MappingControls.controls(forModeID: draft.baseModeID)) { control in
                     controlRow(control)
                 }
