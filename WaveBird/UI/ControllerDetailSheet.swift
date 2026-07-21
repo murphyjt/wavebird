@@ -150,14 +150,24 @@ struct ControllerDetailSheet: View {
                 LabeledContent("Use profile") {
                     Picker("", selection: binding) {
                         ForEach(coordinator.mappingProfiles.builtInProfiles) { profile in
-                            Label(profile.name, systemImage: Self.iconName(forOutputModeID: profile.baseModeID))
-                                .tag(profile.id)
+                            let appearance = ProfileAppearance.resolve(profile)
+                            Label {
+                                Text(profile.name)
+                            } icon: {
+                                Image(systemName: appearance.symbolName).foregroundStyle(appearance.color)
+                            }
+                            .tag(profile.id)
                         }
                         if !coordinator.mappingProfiles.customProfiles.isEmpty {
                             Divider()
                             ForEach(coordinator.mappingProfiles.customProfiles) { profile in
-                                Label(profile.name, systemImage: Self.iconName(forOutputModeID: profile.baseModeID))
-                                    .tag(profile.id)
+                                let appearance = ProfileAppearance.resolve(profile)
+                                Label {
+                                    Text(profile.name)
+                                } icon: {
+                                    Image(systemName: appearance.symbolName).foregroundStyle(appearance.color)
+                                }
+                                .tag(profile.id)
                             }
                         }
                     }
@@ -321,14 +331,6 @@ struct ControllerDetailSheet: View {
                 }
             }
         )
-    }
-
-    private static func iconName(forOutputModeID id: String) -> String {
-        switch id {
-        case "xboxSeries":             "xbox.logo"
-        case "dualShock4", "dualSense": "playstation.logo"
-        default:                       "gamecontroller.fill"
-        }
     }
 
     private static func stateLabel(_ s: DeviceConnectionState?) -> String {
