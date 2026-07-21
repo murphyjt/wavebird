@@ -68,3 +68,17 @@ struct ProfileAppearanceResolveTests {
         #expect(ProfileAppearance.resolve(custom).tint == .red)  // base default
     }
 }
+
+struct MappingControlSymbolsTests {
+    @Test func faceButtonsMapToGlyphs() {
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.a") == "a.circle")
+        #expect(MappingControlSymbols.symbol(forControlID: "switchPro.y") == "y.circle")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.cross") == "xmark")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualSense.triangle") == "triangle")
+    }
+
+    @Test func unmappedControlFallsBackToNil() {
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.leftTrigger") == nil)
+        #expect(MappingControlSymbols.symbol(forControlID: "whatever.zzz") == nil)
+    }
+}
