@@ -152,10 +152,15 @@ struct ProfileDetailPane: View {
         }
     }
 
-    // Digital sources for every control; Task 4 adds analog sources for
-    // analog-trigger outputs.
+    // Digital sources for every control; analog trigger travel is offered only
+    // for analog-trigger outputs (avoids needing an analog→digital threshold).
     private func availableSources(for control: OutputControl) -> [MappingSource] {
-        PhysicalButton.allCases.map { MappingSource.button($0) }
+        var sources = PhysicalButton.allCases.map { MappingSource.button($0) }
+        if control.driver.isAnalogTrigger {
+            sources.append(.leftAnalogTrigger)
+            sources.append(.rightAnalogTrigger)
+        }
+        return sources
     }
 
     private func mappingOptions(for control: OutputControl) -> some View {
