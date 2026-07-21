@@ -107,4 +107,29 @@ extension ControllerState {
                        rx: rightStick.x >> 8, ry: rightStick.y >> 8,
                        tl: triggerL >> 4, tr: triggerR >> 4)
     }
+
+    // Apply per-stick rigid transforms (rotation first, then inversion) on the
+    // centered 12-bit sticks. Presentation-agnostic: runs before the encoder,
+    // same stage as invertingY. Identity transforms return self untouched.
+    func applyingStickTransforms(left: StickTransform, right: StickTransform) -> ControllerState {
+        guard !left.isIdentity || !right.isIdentity else { return self }
+        var copy = self
+        copy.leftStick = Self.transform(leftStick, left)
+        copy.rightStick = Self.transform(rightStick, right)
+        return copy
+    }
+
+    private static func transform(_ v: SIMD2<Int16>, _ t: StickTransform) -> SIMD2<Int16> {
+        var x = Int(v.x)
+        var y = Int(v.y)
+        switch t.rotation {
+        case .none:   break
+        case .cw90:   (x, y) = (y, -x)
+        case .deg180: (x, y) = (-x, -y)
+        case .ccw90:  (x, y) = (-y, x)
+        }
+        if t.invertX { x = -x }
+        if t.invertY { y = -y }
+        return SIMD2(Int16(clamping: x), Int16(clamping: y))
+    }
 }

@@ -287,3 +287,58 @@ struct MappingProfileStoreTests {
         #expect(profile?.baseModeID == "xboxSeries")
     }
 }
+
+struct StickTransformTests {
+    private func s(_ lx: Int16, _ ly: Int16, _ rx: Int16, _ ry: Int16) -> ControllerState {
+        var st = ControllerState.zero
+        st.leftStick = SIMD2(lx, ly)
+        st.rightStick = SIMD2(rx, ry)
+        return st
+    }
+
+    @Test func identityReturnsUnchanged() {
+        let input = s(100, -200, 300, 400)
+        let out = input.applyingStickTransforms(left: .init(), right: .init())
+        #expect(out.leftStick == input.leftStick)
+        #expect(out.rightStick == input.rightStick)
+    }
+
+    @Test func invertVerticalNegatesYOnly() {
+        let out = s(100, -200, 0, 0).applyingStickTransforms(
+            left: .init(invertX: false, invertY: true, rotation: .none), right: .init())
+        #expect(out.leftStick == SIMD2<Int16>(100, 200))
+    }
+
+    @Test func invertHorizontalNegatesXOnly() {
+        let out = s(100, -200, 0, 0).applyingStickTransforms(
+            left: .init(invertX: true, invertY: false, rotation: .none), right: .init())
+        #expect(out.leftStick == SIMD2<Int16>(-100, -200))
+    }
+
+    @Test func rotationsFollowTheDefinedConvention() {
+        // cw90: (x,y)->(y,-x); deg180: (x,y)->(-x,-y); ccw90: (x,y)->(-y,x)
+        let base = s(100, -200, 0, 0)
+        #expect(base.applyingStickTransforms(left: .init(invertX: false, invertY: false, rotation: .cw90), right: .init()).leftStick == SIMD2<Int16>(-200, -100))
+        #expect(base.applyingStickTransforms(left: .init(invertX: false, invertY: false, rotation: .deg180), right: .init()).leftStick == SIMD2<Int16>(-100, 200))
+        #expect(base.applyingStickTransforms(left: .init(invertX: false, invertY: false, rotation: .ccw90), right: .init()).leftStick == SIMD2<Int16>(200, 100))
+    }
+
+    @Test func neutralStaysNeutralUnderEveryTransform() {
+        for rot in StickRotation.allCases {
+            for ix in [false, true] {
+                for iy in [false, true] {
+                    let t = StickTransform(invertX: ix, invertY: iy, rotation: rot)
+                    let out = ControllerState.zero.applyingStickTransforms(left: t, right: t)
+                    #expect(out.leftStick == SIMD2<Int16>(0, 0))
+                    #expect(out.rightStick == SIMD2<Int16>(0, 0))
+                }
+            }
+        }
+    }
+
+    @Test func railsSurviveNegation() {
+        let out = s(-2047, 2047, 0, 0).applyingStickTransforms(
+            left: .init(invertX: true, invertY: true, rotation: .none), right: .init())
+        #expect(out.leftStick == SIMD2<Int16>(2047, -2047))
+    }
+}
