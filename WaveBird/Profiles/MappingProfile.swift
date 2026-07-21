@@ -9,6 +9,8 @@ struct MappingProfile: Codable, Sendable, Hashable, Identifiable {
     var name: String
     var baseModeID: String    // HIDOutputCatalog entry ID; fixed after creation
     var mapping: [String: MappingChoice] = [:]
+    var symbolName: String? = nil   // nil → synthesize from base mode
+    var colorID: String? = nil      // ProfileColor rawValue; nil/unknown → base default
 
     static let defaultIDPrefix = "default."
 

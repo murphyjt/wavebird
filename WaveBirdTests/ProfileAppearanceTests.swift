@@ -36,3 +36,35 @@ struct ProfileSymbolTests {
         #expect(!ProfileSymbol.defaultAppearance(forBaseModeID: "mystery").symbol.isEmpty)
     }
 }
+
+struct ProfileAppearanceResolveTests {
+    @Test func oldBlobWithoutAppearanceDecodesToNil() throws {
+        // A pre-appearance custom-profile blob has no symbolName/colorID keys.
+        let json = """
+        {"id":"abc","name":"Legacy","baseModeID":"xboxSeries","mapping":{}}
+        """
+        let profile = try JSONDecoder().decode(MappingProfile.self, from: Data(json.utf8))
+        #expect(profile.symbolName == nil)
+        #expect(profile.colorID == nil)
+    }
+
+    @Test func resolveFallsBackToBaseDefault() {
+        let bare = MappingProfile(id: "x", name: "Bare", baseModeID: "xboxSeries")
+        let a = ProfileAppearance.resolve(bare)
+        #expect(a.symbolName == "xbox.logo")
+        #expect(a.tint == .green)
+    }
+
+    @Test func resolveHonorsExplicitChoice() {
+        let custom = MappingProfile(id: "y", name: "Mine", baseModeID: "switchPro",
+                                    symbolName: "flame.fill", colorID: "purple")
+        let a = ProfileAppearance.resolve(custom)
+        #expect(a.symbolName == "flame.fill")
+        #expect(a.tint == .purple)
+    }
+
+    @Test func resolveIgnoresUnknownColorID() {
+        let custom = MappingProfile(id: "z", name: "Bad", baseModeID: "switchPro", colorID: "not-a-color")
+        #expect(ProfileAppearance.resolve(custom).tint == .red)  // base default
+    }
+}
