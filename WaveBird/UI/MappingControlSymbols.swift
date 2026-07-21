@@ -34,6 +34,6 @@ enum MappingControlSymbols {
         // PlayStation system buttons — Options is the Start-equivalent (three lines),
         // Create/Share are the capture button, PS is the console logo.
         "options": "line.3.horizontal", "create": "square.and.arrow.up",
-        "ps": "playstation.logo",
+        "ps": "playstation.logo", "touchpad": "rectangle.and.hand.point.up.left",
     ]
 }
