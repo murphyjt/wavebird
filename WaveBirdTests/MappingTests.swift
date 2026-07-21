@@ -121,6 +121,16 @@ struct MappingTransformTests {
         #expect(!state(buttons: [.l]).applyingMapping(spec).shoulders.rightBumper)
     }
 
+    @Test func orOfTwoButtonsDrivesButtonControl() {
+        // "A ← GL OR GR": either source drives the button control (Xbox A = .b).
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .buttons(.b), sources: [.button(.gl), .button(.gr)])
+        ])
+        #expect(state(buttons: [.gl]).applyingMapping(spec).buttons.contains(.b))
+        #expect(state(buttons: [.gr]).applyingMapping(spec).buttons.contains(.b))
+        #expect(!state(buttons: [.a]).applyingMapping(spec).buttons.contains(.b))
+    }
+
     @Test func buttonSourceDrivesTriggerAsFullPull() {
         let spec = ResolvedMappingSpec(overrides: [
             .init(driver: .leftTrigger, sources: [.button(.gl)])
