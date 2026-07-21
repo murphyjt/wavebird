@@ -37,11 +37,11 @@ struct ProfileDetailPane: View {
                 }
 
                 if isReadOnly {
-                    LabeledContent("Emulates") {
+                    LabeledContent("Appearance") {
                         Text(coordinator.catalog.resolved(id: draft.baseModeID).displayName)
                     }
                 } else {
-                    Picker("Emulates", selection: baseModeBinding) {
+                    Picker("Appearance", selection: baseModeBinding) {
                         ForEach(mappableEntries) { entry in
                             Text(entry.displayName).tag(entry.id)
                         }
@@ -71,10 +71,10 @@ struct ProfileDetailPane: View {
         .formStyle(.grouped)
         .onDisappear { commit() }
         .confirmationDialog(
-            "Change Emulated Controller?",
+            "Change Appearance?",
             isPresented: Binding(get: { pendingBaseChange != nil }, set: { if !$0 { pendingBaseChange = nil } })
         ) {
-            Button("Change Emulated Controller", role: .destructive) {
+            Button("Change Appearance", role: .destructive) {
                 if let newValue = pendingBaseChange {
                     draft.baseModeID = newValue
                     draft.mapping = [:]   // control IDs are mode-prefixed
