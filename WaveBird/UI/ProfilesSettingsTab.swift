@@ -1,70 +1,46 @@
 import SwiftUI
 
-// Settings → Profiles: Apple Game-Controllers-style list. Defaults are
-// read-only (no delete); customs open in the editor and can be deleted, with
-// referencing controllers falling back to the base mode's default profile.
+// Settings → Profiles, Safari-style: selectable profile list on the left,
+// live-editing detail on the right. Defaults are read-only and undeletable;
+// customs are editable and deletable (referencing controllers fall back to the
+// base mode's default profile).
 struct ProfilesSettingsTab: View {
     let coordinator: BridgeCoordinator
 
-    private struct EditorState: Identifiable {
-        let profile: MappingProfile
-        let isNew: Bool
-        var id: String { profile.id }
-    }
-
-    @State private var editor: EditorState?
+    @State private var selectedProfileID: String?
     @State private var pendingDelete: MappingProfile?
 
+    private var store: MappingProfileStore { coordinator.mappingProfiles }
+    private var selectedProfile: MappingProfile? {
+        selectedProfileID.flatMap { store.profile(id: $0) }
+    }
+    private var selectedIsCustom: Bool {
+        selectedProfile.map { !$0.isBuiltIn } ?? false
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Profiles configure how a controller appears to your Mac and how its buttons map. A profile can be applied to multiple controllers.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            List {
-                Section("Defaults") {
-                    ForEach(coordinator.mappingProfiles.builtInProfiles) { profile in
-                        row(profile)
-                    }
-                }
-                Section("Custom") {
-                    ForEach(coordinator.mappingProfiles.customProfiles) { profile in
-                        row(profile)
-                            .contextMenu {
-                                Button("Delete…", role: .destructive) { pendingDelete = profile }
-                            }
-                    }
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button {
-                    editor = EditorState(
-                        profile: MappingProfile(id: UUID().uuidString,
-                                                name: "New Profile",
-                                                baseModeID: coordinator.catalog.firstAllowListedID),
-                        isNew: true
-                    )
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .help("New Profile")
-                Spacer()
-            }
+        HStack(spacing: 0) {
+            sidebar
+                .frame(width: 220)
+            Divider()
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(12)
-        .sheet(item: $editor) { state in
-            ProfileEditorSheet(coordinator: coordinator, profile: state.profile, isNew: state.isNew) {
-                editor = nil
-            }
-        }
+        .frame(minWidth: 640, minHeight: 460)
+        .onAppear { reconcileSelection() }
         .confirmationDialog(
             "Delete “\(pendingDelete?.name ?? "")”?",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
         ) {
             Button("Delete", role: .destructive) {
-                if let profile = pendingDelete {
-                    Task { await coordinator.deleteMappingProfile(profile.id) }
+                if let victim = pendingDelete {
+                    Task {
+                        await coordinator.deleteMappingProfile(victim.id)
+                        await MainActor.run {
+                            if selectedProfileID == victim.id { selectedProfileID = nil }
+                            reconcileSelection()
+                        }
+                    }
                 }
                 pendingDelete = nil
             }
@@ -73,31 +49,84 @@ struct ProfilesSettingsTab: View {
         }
     }
 
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            List(selection: $selectedProfileID) {
+                Section("Defaults") {
+                    ForEach(store.builtInProfiles) { row($0) }
+                }
+                Section("Custom") {
+                    ForEach(store.customProfiles) { profile in
+                        row(profile)
+                            .contextMenu {
+                                Button("Delete…", role: .destructive) { pendingDelete = profile }
+                            }
+                    }
+                }
+            }
+
+            Divider()
+            HStack(spacing: 0) {
+                Button(action: addProfile) { Image(systemName: "plus") }
+                    .buttonStyle(.borderless)
+                    .frame(width: 28, height: 22)
+                    .help("New Profile")
+                Divider().frame(height: 14)
+                Button(action: deleteSelected) { Image(systemName: "minus") }
+                    .buttonStyle(.borderless)
+                    .frame(width: 28, height: 22)
+                    .disabled(!selectedIsCustom)
+                    .help("Delete Profile")
+                Spacer()
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+        }
+    }
+
     @ViewBuilder
+    private var detail: some View {
+        if let profile = selectedProfile {
+            ProfileDetailPane(coordinator: coordinator, profile: profile)
+                .id(profile.id)
+        } else {
+            Text("Select a profile")
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private func row(_ profile: MappingProfile) -> some View {
-        HStack {
-            Image(systemName: iconName(forOutputModeID: profile.baseModeID))
+        let appearance = ProfileAppearance.resolve(profile)
+        let count = coordinator.assignedControllerCount(profileID: profile.id)
+        return HStack {
+            Image(systemName: appearance.symbolName)
+                .foregroundStyle(appearance.color)
                 .frame(width: 22)
             VStack(alignment: .leading) {
                 Text(profile.name)
-                let count = coordinator.assignedControllerCount(profileID: profile.id)
                 Text(count == 1 ? "1 controller" : "\(count) controllers")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Spacer()
         }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            editor = EditorState(profile: profile, isNew: false)
-        }
+        .tag(profile.id)
     }
 
-    private func iconName(forOutputModeID id: String) -> String {
-        switch id {
-        case "xboxSeries": "xbox.logo"
-        case "dualShock4", "dualSense": "playstation.logo"
-        default: "gamecontroller.fill"
-        }
+    private func addProfile() {
+        let new = MappingProfile(id: UUID().uuidString,
+                                 name: "New Profile",
+                                 baseModeID: coordinator.catalog.firstAllowListedID)
+        store.upsert(new)
+        selectedProfileID = new.id
+    }
+
+    private func deleteSelected() {
+        pendingDelete = selectedProfile.flatMap { $0.isBuiltIn ? nil : $0 }
+    }
+
+    // Keep selection pointing at a real profile after add/delete/first show.
+    private func reconcileSelection() {
+        if let id = selectedProfileID, store.profile(id: id) != nil { return }
+        selectedProfileID = store.builtInProfiles.first?.id
     }
 }
