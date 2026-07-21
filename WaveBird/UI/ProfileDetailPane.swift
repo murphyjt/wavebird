@@ -105,7 +105,9 @@ struct ProfileDetailPane: View {
         Binding(
             get: { draft.baseModeID },
             set: { newValue in
-                if draft.mapping.isEmpty {
+                if newValue == draft.baseModeID {
+                    return
+                } else if draft.mapping.isEmpty {
                     draft.baseModeID = newValue
                     commit()
                 } else {

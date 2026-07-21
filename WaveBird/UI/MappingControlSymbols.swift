@@ -1,5 +1,3 @@
-import Foundation
-
 // SF Symbol glyph for an emulated control row, keyed by the control ID's suffix
 // (the token after the mode prefix). Only names known to exist in SF Symbols are
 // returned; anything without a faithful glyph returns nil so the row stays
