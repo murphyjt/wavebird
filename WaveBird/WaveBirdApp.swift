@@ -27,8 +27,14 @@ struct WaveBirdApp: App {
         .defaultLaunchBehavior(.suppressed)
         .windowResizability(.contentSize)
 
+        Window("Profiles", id: "profiles") {
+            ProfilesView(coordinator: appDelegate.coordinator)
+        }
+        .defaultLaunchBehavior(.suppressed)
+        .defaultSize(width: 720, height: 540)
+
         Settings {
-            SettingsView(launch: appDelegate.launch, coordinator: appDelegate.coordinator)
+            SettingsView(launch: appDelegate.launch)
         }
 
         MenuBarExtra("WaveBird", systemImage: "gamecontroller") {

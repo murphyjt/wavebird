@@ -1,10 +1,12 @@
 import SwiftUI
 
-// Settings → Profiles, Safari-style: selectable profile list on the left,
-// live-editing detail on the right. Defaults are read-only and undeletable;
-// customs are editable and deletable (referencing controllers fall back to the
-// base mode's default profile).
-struct ProfilesSettingsTab: View {
+// The dedicated Profiles window, Safari-style: selectable profile list on the
+// left, live-editing detail on the right. Defaults are read-only and
+// undeletable; customs are editable and deletable (referencing controllers fall
+// back to the base mode's default profile). As the window root, NavigationSplitView
+// owns the toolbar, so the standard sidebar toggle collapses/reopens correctly —
+// which it can't when nested under the Settings TabView.
+struct ProfilesView: View {
     let coordinator: BridgeCoordinator
 
     @State private var selectedProfileID: String?
@@ -19,13 +21,13 @@ struct ProfilesSettingsTab: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             sidebar
-                .frame(width: 220)
-            Divider()
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 320)
+        } detail: {
             detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 640, minHeight: 460)
         .onAppear { reconcileSelection() }
         .confirmationDialog(
@@ -48,21 +50,24 @@ struct ProfilesSettingsTab: View {
     }
 
     private var sidebar: some View {
-        VStack(spacing: 0) {
-            List(selection: $selectedProfileID) {
-                Section("Defaults") {
-                    ForEach(store.builtInProfiles) { row($0) }
-                }
-                Section("Custom") {
-                    ForEach(store.customProfiles) { profile in
-                        row(profile)
-                            .contextMenu {
-                                Button("Delete…", role: .destructive) { pendingDelete = profile }
-                            }
-                    }
+        List(selection: $selectedProfileID) {
+            Section("Defaults") {
+                ForEach(store.builtInProfiles) { row($0) }
+            }
+            Section("Custom") {
+                ForEach(store.customProfiles) { profile in
+                    row(profile)
+                        .contextMenu {
+                            Button("Delete…", role: .destructive) { pendingDelete = profile }
+                        }
                 }
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { footerBar }
+    }
 
+    private var footerBar: some View {
+        VStack(spacing: 0) {
             Divider()
             HStack(spacing: 0) {
                 Button(action: addProfile) {
@@ -86,6 +91,7 @@ struct ProfilesSettingsTab: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
         }
+        .background(.bar)
     }
 
     @ViewBuilder

@@ -168,9 +168,12 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        Text("Controllers")
-            .font(.headline)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack {
+            Text("Controllers")
+                .font(.headline)
+            Spacer()
+            Button("Profiles…") { openWindow(id: "profiles") }
+        }
     }
 
     private func transportBanner(_ reason: String) -> some View {
