@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import WaveBird
@@ -80,8 +81,15 @@ struct MappingControlSymbolsTests {
     @Test func xboxSystemButtonsMapToGlyphs() {
         #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.view") == "square.on.square")
         #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.menu") == "line.3.horizontal")
-        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.guide") == "logo.xbox")
         #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.share") == "square.and.arrow.up")
+    }
+
+    // Guide resolves to whichever Xbox-logo name the running OS ships (SF Symbols 8
+    // renamed logo.xbox → xbox.logo); either way it must be a real, rendering glyph.
+    @Test func xboxGuideResolvesToAnAvailableLogo() throws {
+        let name = try #require(MappingControlSymbols.symbol(forControlID: "xboxSeries.guide"))
+        #expect(name == "xbox.logo" || name == "logo.xbox")
+        #expect(NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil)
     }
 
     @Test func unmappedControlFallsBackToNil() {
