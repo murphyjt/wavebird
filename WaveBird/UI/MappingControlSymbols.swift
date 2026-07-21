@@ -1,3 +1,5 @@
+import AppKit
+
 // SF Symbol glyph for an emulated control row, keyed by the control ID's suffix
 // (the token after the mode prefix). Only names known to exist in SF Symbols are
 // returned; anything without a faithful glyph returns nil so the row stays
@@ -29,6 +31,14 @@ enum MappingControlSymbols {
         "home": "house.circle", "capture": "square.circle",
         // Xbox system buttons (glyphs mirror the printed button icons)
         "view": "square.on.square", "menu": "line.3.horizontal",
-        "guide": "logo.xbox", "share": "square.and.arrow.up",
+        "guide": xboxLogo, "share": "square.and.arrow.up",
     ]
+
+    // SF Symbols 8 renamed logo.xbox → xbox.logo; the new name only resolves on
+    // OSes shipping SF Symbols 8+, while logo.xbox is deprecated-but-still-rendering
+    // everywhere. Pick the new name where present, else the alias — so the Guide
+    // glyph is correct on the macOS 26 deployment baseline and newer alike.
+    private static let xboxLogo: String =
+        NSImage(systemSymbolName: "xbox.logo", accessibilityDescription: nil) != nil
+            ? "xbox.logo" : "logo.xbox"
 }
