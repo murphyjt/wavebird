@@ -172,8 +172,8 @@ struct ResolvedMappingSpec: Sendable {
 }
 
 extension ControllerState {
-    // Pre-encode rewrite: runs in the dispatch task after invertingY, before
-    // buildReport. Reads presses from the ORIGINAL state, writes into a copy —
+    // Pre-encode rewrite: runs in the dispatch task after applyingStickTransforms,
+    // before buildReport. Reads presses from the ORIGINAL state, writes into a copy —
     // so "A ← ZL" still lets physical ZL drive its own default row too
     // (duplicates allowed, no swap inference).
     func applyingMapping(_ spec: ResolvedMappingSpec) -> ControllerState {
@@ -227,7 +227,7 @@ extension ControllerState {
 
 // Live-updatable spec shared between the main actor (profile edits) and a
 // device's off-main dispatch task, which samples `current` per report — the
-// same lock-guarded-snapshot idiom as AxisSettings/RumbleSettings.
+// same lock-guarded-snapshot idiom as RumbleSettings/XboxOutputSettings.
 final class MappingSpecBox: Sendable {
     private let lock: OSAllocatedUnfairLock<ResolvedMappingSpec>
 

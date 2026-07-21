@@ -18,7 +18,6 @@ extension BridgeCoordinator {
               let session = record.session else { return }
         let profile = record.profile
         let calibration = record.calibration
-        let axis = axisSettings(for: record)
         let mapBox = mappingSpecBoxes[id] ?? {
             let box = MappingSpecBox()
             mappingSpecBoxes[id] = box
@@ -41,10 +40,7 @@ extension BridgeCoordinator {
                 case .usb: parsed = profile.parseUSBReport(raw.data, reportID: raw.reportID ?? 0, calibration: calibration)
                 }
                 guard let parsed else { continue }
-                let inv = axis.snapshot()
-                let state = parsed
-                    .invertingY(left: inv.invertLeftY, right: inv.invertRightY)
-                    .applyingMapping(mapBox.current)
+                let state = parsed.applyingMapping(mapBox.current)
                 // Idle tracking: only a changed input fingerprint counts as activity.
                 let sig = state.idleSignature
                 if sig != lastSig { lastSig = sig; tracker.touch(id, at: .now) }
@@ -82,7 +78,6 @@ extension BridgeCoordinator {
         guard let record = devices[id] else { return }
         let profile = record.profile
         let calibration = record.calibration
-        let axis = pairAxisSettings()
         let mapBox = pairMappingSpecBox
         let kind = id.transport
         let (stream, continuation) = AsyncStream.makeStream(of: RawReport.self, bufferingPolicy: .bufferingNewest(1))
@@ -105,10 +100,7 @@ extension BridgeCoordinator {
                 // see the same merged state), so the pair idles as one.
                 let sig = merged.idleSignature
                 if sig != lastSig { lastSig = sig; self.activityTracker.touch(id, at: .now) }
-                let inv = axis.snapshot()
-                let mapped = merged
-                    .invertingY(left: inv.invertLeftY, right: inv.invertRightY)
-                    .applyingMapping(mapBox.current)
+                let mapped = merged.applyingMapping(mapBox.current)
                 let report = await session.buildReport(mapped)
                 try? await vhid.dispatch(report)
             }

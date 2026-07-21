@@ -6,9 +6,8 @@ import os
 // whether to stream the GIP input report (0x20) that SDL/HIDAPI consumers
 // (Dolphin, …) read. The faithful report 0x01 (GameController / Steam) is always
 // sent; this only gates the extra GIP stream. Same per-serial model as
-// AxisSettings/RumbleSettings: persisted to UserDefaults by serial, sampled off
-// main by the dispatch task through a lock-guarded Snapshot, Observation for the
-// UI binding.
+// RumbleSettings: persisted to UserDefaults by serial, sampled off main by the
+// dispatch task through a lock-guarded Snapshot, Observation for the UI binding.
 //
 // "GIP" (Game Input Protocol) is the Xbox One/Series controller protocol — not
 // "XInput", which is the older Windows-only Xbox 360 API. On macOS these reports
