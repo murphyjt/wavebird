@@ -56,6 +56,10 @@ struct MenuBarContent: View {
 
         Divider()
 
+        Button("Profiles…") {
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: "profiles")
+        }
         Button("Settings…") {
             NSApp.activate(ignoringOtherApps: true)
             openSettings()
