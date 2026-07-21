@@ -78,7 +78,7 @@ struct MappingControlSymbolsTests {
     }
 
     @Test func unmappedControlFallsBackToNil() {
-        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.leftTrigger") == nil)
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.view") == nil)
         #expect(MappingControlSymbols.symbol(forControlID: "whatever.zzz") == nil)
     }
 }
