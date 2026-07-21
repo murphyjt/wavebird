@@ -77,8 +77,15 @@ struct MappingControlSymbolsTests {
         #expect(MappingControlSymbols.symbol(forControlID: "dualSense.triangle") == "triangle")
     }
 
+    @Test func xboxSystemButtonsMapToGlyphs() {
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.view") == "square.on.square")
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.menu") == "line.3.horizontal")
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.guide") == "logo.xbox")
+        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.share") == "square.and.arrow.up")
+    }
+
     @Test func unmappedControlFallsBackToNil() {
-        #expect(MappingControlSymbols.symbol(forControlID: "xboxSeries.view") == nil)
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.touchpad") == nil)
         #expect(MappingControlSymbols.symbol(forControlID: "whatever.zzz") == nil)
     }
 }
