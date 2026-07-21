@@ -32,10 +32,12 @@ struct ProfilePickerSheet: View {
 
             Picker("Profile", selection: $selectedProfileID) {
                 ForEach(coordinator.mappingProfiles.builtInProfiles + coordinator.mappingProfiles.customProfiles) { profile in
+                    let appearance = ProfileAppearance.resolve(profile)
                     Label {
                         Text(profile.name)
                     } icon: {
-                        Image(systemName: iconName(forOutputModeID: profile.baseModeID))
+                        Image(systemName: appearance.symbolName)
+                            .foregroundStyle(appearance.color)
                             .frame(width: 22, alignment: .center)
                     }
                     .padding(.leading, 8)
@@ -59,11 +61,4 @@ struct ProfilePickerSheet: View {
         coordinator.listEntries.first { $0.live?.id == deviceID }?.displayName ?? "Controller"
     }
 
-    private func iconName(forOutputModeID id: String) -> String {
-        switch id {
-        case "xboxSeries": "xbox.logo"
-        case "dualShock4", "dualSense": "playstation.logo"
-        default: "gamecontroller.fill"
-        }
-    }
 }
