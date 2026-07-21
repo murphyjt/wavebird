@@ -62,7 +62,11 @@ struct ProfileDetailPane: View {
                             }
                         }
                     } label: {
-                        Text(control.displayName)
+                        if let glyph = MappingControlSymbols.symbol(forControlID: control.id) {
+                            Label(control.displayName, systemImage: glyph)
+                        } else {
+                            Text(control.displayName)
+                        }
                     }
                     .disabled(isReadOnly)
                 }
