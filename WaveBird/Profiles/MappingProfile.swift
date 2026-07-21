@@ -11,6 +11,8 @@ struct MappingProfile: Codable, Sendable, Hashable, Identifiable {
     var mapping: [String: MappingChoice] = [:]
     var symbolName: String? = nil   // nil → synthesize from base mode
     var colorID: String? = nil      // ProfileColor rawValue; nil/unknown → base default
+    var leftStick: StickTransform = .init()
+    var rightStick: StickTransform = .init()
 
     static let defaultIDPrefix = "default."
 
@@ -19,6 +21,28 @@ struct MappingProfile: Codable, Sendable, Hashable, Identifiable {
     }
 
     var isBuiltIn: Bool { id.hasPrefix(Self.defaultIDPrefix) }
+}
+
+// leftStick/rightStick are non-optional with defaults, so the synthesized
+// Decodable would reject older blobs missing those keys. This tolerant
+// decoder lives in an extension (not the struct body) to preserve the
+// compiler-synthesized memberwise initializer existing call sites rely on.
+extension MappingProfile {
+    enum CodingKeys: String, CodingKey {
+        case id, name, baseModeID, mapping, symbolName, colorID, leftStick, rightStick
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        baseModeID = try c.decode(String.self, forKey: .baseModeID)
+        mapping = try c.decodeIfPresent([String: MappingChoice].self, forKey: .mapping) ?? [:]
+        symbolName = try c.decodeIfPresent(String.self, forKey: .symbolName)
+        colorID = try c.decodeIfPresent(String.self, forKey: .colorID)
+        leftStick = try c.decodeIfPresent(StickTransform.self, forKey: .leftStick) ?? .init()
+        rightStick = try c.decodeIfPresent(StickTransform.self, forKey: .rightStick) ?? .init()
+    }
 }
 
 extension ResolvedMappingSpec {
@@ -37,6 +61,8 @@ extension ResolvedMappingSpec {
                 overrides.append(Override(driver: control.driver, source: .physical(button)))
             }
         }
-        return ResolvedMappingSpec(overrides: overrides)
+        return ResolvedMappingSpec(overrides: overrides,
+                                   leftStick: profile.leftStick,
+                                   rightStick: profile.rightStick)
     }
 }

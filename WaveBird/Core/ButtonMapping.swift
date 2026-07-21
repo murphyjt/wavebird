@@ -163,7 +163,10 @@ struct ResolvedMappingSpec: Sendable {
     }
 
     let overrides: [Override]
-    var isDefault: Bool { overrides.isEmpty }
+    var leftStick: StickTransform = .init()
+    var rightStick: StickTransform = .init()
+
+    var isDefault: Bool { overrides.isEmpty && leftStick.isIdentity && rightStick.isIdentity }
 
     static let identity = ResolvedMappingSpec(overrides: [])
 }
@@ -184,7 +187,7 @@ extension ControllerState {
                   buttons.contains(button.buttonSetMember) else { continue }
             Self.set(override.driver, in: &out)
         }
-        return out
+        return out.applyingStickTransforms(left: spec.leftStick, right: spec.rightStick)
     }
 
     private static func clear(_ driver: ControlDriver, in state: inout ControllerState) {
