@@ -65,20 +65,26 @@ struct ProfilesSettingsTab: View {
 
             Divider()
             HStack(spacing: 0) {
-                Button(action: addProfile) { Image(systemName: "plus") }
-                    .buttonStyle(.borderless)
-                    .frame(width: 28, height: 22)
-                    .help("New Profile")
+                Button(action: addProfile) {
+                    Image(systemName: "plus")
+                        .frame(width: 30, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("New Profile")
                 Divider().frame(height: 14)
-                Button(action: deleteSelected) { Image(systemName: "minus") }
-                    .buttonStyle(.borderless)
-                    .frame(width: 28, height: 22)
-                    .disabled(!selectedIsCustom)
-                    .help("Delete Profile")
+                Button(action: deleteSelected) {
+                    Image(systemName: "minus")
+                        .frame(width: 30, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!selectedIsCustom)
+                .help("Delete Profile")
                 Spacer()
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
     }
 
