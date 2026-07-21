@@ -56,14 +56,6 @@ struct PhysicalButtonTests {
         #expect(PhysicalButton.sl.buttonSetMember == .sl)
         #expect(PhysicalButton.sr.buttonSetMember == .sr)
     }
-
-    @Test func mappingChoiceRawValues() {
-        #expect(MappingChoice.off.rawValue == "off")
-        #expect(MappingChoice.physical(.gl).rawValue == "gl")
-        #expect(MappingChoice(rawValue: "off") == .off)
-        #expect(MappingChoice(rawValue: "zl") == .physical(.zl))
-        #expect(MappingChoice(rawValue: "nonsense") == nil)
-    }
 }
 
 struct MappingControlsTests {
@@ -108,28 +100,35 @@ struct MappingTransformTests {
         #expect(out.leftStick == input.leftStick)
     }
 
-    @Test func glDrivesRemappedButton() {
-        // "Xbox A ← GL": Xbox A's driver is ButtonSet.b.
+    @Test func singleSourceDrivesRemappedButton() {
         let spec = ResolvedMappingSpec(overrides: [
-            .init(driver: .buttons(.b), source: .physical(.gl))
+            .init(driver: .buttons(.b), sources: [.button(.gl)])
         ])
         let pressed = state(buttons: [.gl]).applyingMapping(spec)
         #expect(pressed.buttons.contains(.b))
-        // The physical B button no longer drives the remapped control.
         let bOnly = state(buttons: [.b]).applyingMapping(spec)
         #expect(!bOnly.buttons.contains(.b))
-        // GL itself passes through untouched (it drives no default control).
         #expect(pressed.buttons.contains(.gl))
     }
 
-    @Test func glDrivesTriggerAsDigitalFullPull() {
+    @Test func orOfTwoButtonsDrivesControl() {
+        // "Right Bumper ← R OR SR": either input fires it.
         let spec = ResolvedMappingSpec(overrides: [
-            .init(driver: .leftTrigger, source: .physical(.gl))
+            .init(driver: .rightBumper, sources: [.button(.r), .button(.sr)])
+        ])
+        #expect(state(buttons: [.r]).applyingMapping(spec).shoulders.rightBumper)
+        #expect(state(buttons: [.sr]).applyingMapping(spec).shoulders.rightBumper)
+        #expect(!state(buttons: [.l]).applyingMapping(spec).shoulders.rightBumper)
+    }
+
+    @Test func buttonSourceDrivesTriggerAsFullPull() {
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .leftTrigger, sources: [.button(.gl)])
         ])
         let pressed = state(buttons: [.gl]).applyingMapping(spec)
         #expect(pressed.shoulders.leftTriggerDigital)
         #expect(pressed.shoulders.leftTriggerAnalog == 0xFF)
-        // Original trigger source is cleared when the row is remapped.
+        // Remapping a trigger row clears the original source.
         let zl = state(buttons: [.zl],
                        shoulders: StandardShoulders(leftTriggerDigital: true, leftTriggerAnalog: 0xFF))
             .applyingMapping(spec)
@@ -137,19 +136,38 @@ struct MappingTransformTests {
         #expect(zl.shoulders.leftTriggerAnalog == 0)
     }
 
+    @Test func analogSourcePreservesTriggerTravel() {
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .rightTrigger, sources: [.leftAnalogTrigger])
+        ])
+        let out = state(buttons: [], shoulders: StandardShoulders(leftTriggerAnalog: 100))
+            .applyingMapping(spec)
+        #expect(out.shoulders.rightTriggerAnalog == 100)
+        #expect(!out.shoulders.rightTriggerDigital)   // partial travel is not a click
+    }
+
+    @Test func triggerCombineTakesMaxContribution() {
+        // Button (0xFF) vs analog (50) → max wins → full press.
+        let spec = ResolvedMappingSpec(overrides: [
+            .init(driver: .leftTrigger, sources: [.button(.a), .leftAnalogTrigger])
+        ])
+        let out = state(buttons: [.a], shoulders: StandardShoulders(leftTriggerAnalog: 50))
+            .applyingMapping(spec)
+        #expect(out.shoulders.leftTriggerAnalog == 0xFF)
+        #expect(out.shoulders.leftTriggerDigital)
+    }
+
     @Test func offSuppressesControl() {
         let spec = ResolvedMappingSpec(overrides: [
-            .init(driver: .buttons(.home), source: .off)
+            .init(driver: .buttons(.home), sources: [])
         ])
         let out = state(buttons: [.home]).applyingMapping(spec)
         #expect(!out.buttons.contains(.home))
     }
 
     @Test func defaultRowsPreserveAnalogTriggers() {
-        // Non-default spec elsewhere; the LT row is untouched, so GC's analog
-        // trigger value copies through.
         let spec = ResolvedMappingSpec(overrides: [
-            .init(driver: .buttons(.b), source: .physical(.gl))
+            .init(driver: .buttons(.b), sources: [.button(.gl)])
         ])
         let out = state(buttons: [],
                         shoulders: StandardShoulders(leftTriggerAnalog: 0x80)).applyingMapping(spec)
@@ -157,9 +175,8 @@ struct MappingTransformTests {
     }
 
     @Test func multiMemberDriverClearsAndSetsTogether() {
-        // Xbox Menu reads .plus OR .start; remapping it must silence both.
         let spec = ResolvedMappingSpec(overrides: [
-            .init(driver: .buttons([.plus, .start]), source: .physical(.gr))
+            .init(driver: .buttons([.plus, .start]), sources: [.button(.gr)])
         ])
         let startOnly = state(buttons: [.start]).applyingMapping(spec)
         #expect(!startOnly.buttons.contains(.start))
@@ -167,16 +184,6 @@ struct MappingTransformTests {
         let grPressed = state(buttons: [.gr]).applyingMapping(spec)
         #expect(grPressed.buttons.contains(.plus))
         #expect(grPressed.buttons.contains(.start))
-    }
-
-    @Test func onePhysicalButtonMayDriveSeveralControls() {
-        let spec = ResolvedMappingSpec(overrides: [
-            .init(driver: .buttons(.b), source: .physical(.gl)),
-            .init(driver: .rightBumper, source: .physical(.gl)),
-        ])
-        let out = state(buttons: [.gl]).applyingMapping(spec)
-        #expect(out.buttons.contains(.b))
-        #expect(out.shoulders.rightBumper)
     }
 }
 
@@ -187,7 +194,7 @@ struct MappingProfileTests {
             id: UUID().uuidString,
             name: "Grips as bumpers",
             baseModeID: "xboxSeries",
-            mapping: ["xboxSeries.leftBumper": .physical(.gl),
+            mapping: ["xboxSeries.leftBumper": .sources([.button(.gl)]),
                       "xboxSeries.guide": .off]
         )
         let data = try JSONEncoder().encode(profile)
@@ -209,20 +216,32 @@ struct MappingProfileTests {
             id: UUID().uuidString,
             name: "Test",
             baseModeID: "xboxSeries",
-            mapping: ["xboxSeries.a": .physical(.gl),
+            mapping: ["xboxSeries.a": .sources([.button(.gl)]),
                       "xboxSeries.guide": .off,
-                      "xboxSeries.unknownRow": .physical(.gr)]  // stale ID: ignored
+                      "xboxSeries.unknownRow": .sources([.button(.gr)])]  // stale ID: ignored
         )
         let spec = ResolvedMappingSpec.resolve(profile: profile)
         #expect(spec.overrides.count == 2)
     }
 
-    @Test func mappingChoiceEncodesAsBareJSONString() throws {
-        // The store's on-disk format depends on MappingChoice serializing as
-        // its raw string (stdlib RawRepresentable Codable path), not SE-0295
-        // keyed form like {"physical":"gl"}.
-        #expect(String(data: try JSONEncoder().encode(MappingChoice.physical(.gl)), encoding: .utf8) == "\"gl\"")
-        #expect(String(data: try JSONEncoder().encode(MappingChoice.off), encoding: .utf8) == "\"off\"")
+    @Test func mappingChoiceEncodesAsTokenArray() throws {
+        let single = try JSONEncoder().encode(MappingChoice.sources([.button(.gl)]))
+        #expect(String(data: single, encoding: .utf8) == "[\"gl\"]")
+        let off = try JSONEncoder().encode(MappingChoice.off)
+        #expect(String(data: off, encoding: .utf8) == "[\"off\"]")
+        let multi = try JSONEncoder().encode(MappingChoice.sources([.button(.l), .button(.sl)]))
+        #expect(String(data: multi, encoding: .utf8) == "[\"l\",\"sl\"]")
+    }
+
+    @Test func mappingChoiceDecodesTokenArray() throws {
+        func decode(_ json: String) throws -> MappingChoice {
+            try JSONDecoder().decode(MappingChoice.self, from: Data(json.utf8))
+        }
+        #expect(try decode("[\"off\"]") == .off)
+        #expect(try decode("[\"l\",\"sl\"]") == .sources([.button(.l), .button(.sl)]))
+        #expect(try decode("[\"l\",\"analogL\"]") == .sources([.button(.l), .leftAnalogTrigger]))
+        // Unknown tokens are dropped.
+        #expect(try decode("[\"l\",\"bogus\"]") == .sources([.button(.l)]))
     }
 }
 
@@ -249,7 +268,7 @@ struct MappingProfileStoreTests {
         let store = MappingProfileStore(defaults: defaults)
         let profile = MappingProfile(id: UUID().uuidString, name: "Mine",
                                      baseModeID: "dualSense",
-                                     mapping: ["dualSense.l2": .physical(.gl)])
+                                     mapping: ["dualSense.l2": .sources([.button(.gl)])])
         store.upsert(profile)
         let reloaded = MappingProfileStore(defaults: defaults)
         #expect(reloaded.profile(id: profile.id) == profile)

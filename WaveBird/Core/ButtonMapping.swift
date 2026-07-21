@@ -99,26 +99,27 @@ enum PhysicalButton: String, CaseIterable, Sendable, Codable, Hashable, Identifi
     }
 }
 
-// One row's stored choice in a MappingProfile: drive the control from a
-// physical button, or disable it outright. Absence from the dict = Default.
-enum MappingChoice: RawRepresentable, Codable, Sendable, Hashable {
+// One row's stored choice: drive the control from the OR of one or more
+// physical sources, or disable it. Absence from the mapping dict = Default
+// (copy-through). Persisted as a JSON array of source tokens; ["off"] = off.
+enum MappingChoice: Sendable, Hashable, Codable {
     case off
-    case physical(PhysicalButton)
+    case sources([MappingSource])
 
-    var rawValue: String {
-        switch self {
-        case .off: "off"
-        case .physical(let button): button.rawValue
+    init(from decoder: any Decoder) throws {
+        let tokens = try decoder.singleValueContainer().decode([String].self)
+        if tokens.contains("off") {
+            self = .off
+        } else {
+            self = .sources(tokens.compactMap(MappingSource.init(token:)))
         }
     }
 
-    init?(rawValue: String) {
-        if rawValue == "off" {
-            self = .off
-        } else if let button = PhysicalButton(rawValue: rawValue) {
-            self = .physical(button)
-        } else {
-            return nil
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .off: try container.encode(["off"])
+        case .sources(let sources): try container.encode(sources.map(\.token))
         }
     }
 }
@@ -133,6 +134,15 @@ enum ControlDriver: Sendable, Hashable {
     case rightBumper
     case leftTrigger
     case rightTrigger
+}
+
+extension ControlDriver {
+    var isAnalogTrigger: Bool {
+        switch self {
+        case .leftTrigger, .rightTrigger: true
+        default: false
+        }
+    }
 }
 
 // One remappable row of an output mode: stable ID (persistence key — never
@@ -152,14 +162,9 @@ struct OutputControl: Sendable, Identifiable, Hashable {
 // Empty overrides == the stock profile — the transform is a guaranteed no-op
 // so the default hot path stays bit-exact.
 struct ResolvedMappingSpec: Sendable {
-    enum Source: Sendable, Hashable {
-        case off
-        case physical(PhysicalButton)
-    }
-
     struct Override: Sendable {
         let driver: ControlDriver
-        let source: Source
+        let sources: [MappingSource]   // empty = Off (clear only); non-empty = replace with the OR
     }
 
     let overrides: [Override]
@@ -183,9 +188,7 @@ extension ControllerState {
             Self.clear(override.driver, in: &out)
         }
         for override in spec.overrides {
-            guard case .physical(let button) = override.source,
-                  buttons.contains(button.buttonSetMember) else { continue }
-            Self.set(override.driver, in: &out)
+            Self.drive(override.driver, from: override.sources, reading: self, into: &out)
         }
         return out.applyingStickTransforms(left: spec.leftStick, right: spec.rightStick)
     }
@@ -207,20 +210,33 @@ extension ControllerState {
         }
     }
 
-    private static func set(_ driver: ControlDriver, in state: inout ControllerState) {
+    // Reads presses/travel from the ORIGINAL state, writes into the copy, so a
+    // source can still drive its own default row too. Empty sources = Off:
+    // the driver was cleared above and nothing is set.
+    private static func drive(_ driver: ControlDriver, from sources: [MappingSource],
+                              reading input: ControllerState, into state: inout ControllerState) {
+        guard !sources.isEmpty else { return }
         switch driver {
         case .buttons(let members):
-            state.buttons.formUnion(members)
+            if sources.contains(where: { $0.isPressed(in: input) }) {
+                state.buttons.formUnion(members)
+            }
         case .leftBumper:
-            state.shoulders.leftBumper = true
+            if sources.contains(where: { $0.isPressed(in: input) }) {
+                state.shoulders.leftBumper = true
+            }
         case .rightBumper:
-            state.shoulders.rightBumper = true
+            if sources.contains(where: { $0.isPressed(in: input) }) {
+                state.shoulders.rightBumper = true
+            }
         case .leftTrigger:
-            state.shoulders.leftTriggerDigital = true
-            state.shoulders.leftTriggerAnalog = 0xFF
+            let value = sources.map { $0.analogValue(in: input) }.max() ?? 0
+            state.shoulders.leftTriggerAnalog = value
+            state.shoulders.leftTriggerDigital = (value == 0xFF)
         case .rightTrigger:
-            state.shoulders.rightTriggerDigital = true
-            state.shoulders.rightTriggerAnalog = 0xFF
+            let value = sources.map { $0.analogValue(in: input) }.max() ?? 0
+            state.shoulders.rightTriggerAnalog = value
+            state.shoulders.rightTriggerDigital = (value == 0xFF)
         }
     }
 }
