@@ -342,3 +342,41 @@ struct StickTransformTests {
         #expect(out.leftStick == SIMD2<Int16>(2047, -2047))
     }
 }
+
+struct MappingSpecTransformTests {
+    @Test func oldBlobWithoutTransformsDecodesToIdentity() throws {
+        let json = """
+        {"id":"a","name":"Legacy","baseModeID":"xboxSeries","mapping":{}}
+        """
+        let profile = try JSONDecoder().decode(MappingProfile.self, from: Data(json.utf8))
+        #expect(profile.leftStick.isIdentity)
+        #expect(profile.rightStick.isIdentity)
+    }
+
+    @Test func resolveCarriesTransforms() {
+        var profile = MappingProfile(id: "a", name: "Sideways", baseModeID: "switchPro")
+        profile.leftStick = StickTransform(invertX: false, invertY: false, rotation: .cw90)
+        let spec = ResolvedMappingSpec.resolve(profile: profile)
+        #expect(spec.leftStick.rotation == .cw90)
+        #expect(!spec.isDefault)  // a transform makes the spec non-default
+    }
+
+    @Test func identitySpecStillFastPaths() {
+        // No overrides AND no transforms => isDefault => untouched passthrough.
+        let spec = ResolvedMappingSpec.resolve(profile:
+            MappingProfile(id: "d", name: "Default", baseModeID: "switchPro"))
+        #expect(spec.isDefault)
+        var st = ControllerState.zero
+        st.leftStick = SIMD2(100, -200)
+        #expect(st.applyingMapping(spec).leftStick == SIMD2<Int16>(100, -200))
+    }
+
+    @Test func applyingMappingAppliesTransform() {
+        var profile = MappingProfile(id: "a", name: "Flip", baseModeID: "switchPro")
+        profile.leftStick = StickTransform(invertX: false, invertY: true, rotation: .none)
+        let spec = ResolvedMappingSpec.resolve(profile: profile)
+        var st = ControllerState.zero
+        st.leftStick = SIMD2(100, -200)
+        #expect(st.applyingMapping(spec).leftStick == SIMD2<Int16>(100, 200))
+    }
+}
