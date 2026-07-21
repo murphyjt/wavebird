@@ -159,26 +159,6 @@ final class BridgeCoordinator {
                        productID: joyConPairProfile.hidProductID)
     }
 
-    // Per-controller axis configuration (Y-axis inversion). Same per-serial
-    // model as rumble. The dispatch task reads a snapshot off-main, so it never
-    // touches @MainActor state.
-    var axisSettingsBySerial: [String: AxisSettings] = [:]
-
-    func axisSettings(for record: DeviceRecord) -> AxisSettings {
-        axisSettings(forSerial: settingsKey(for: record))
-    }
-
-    func axisSettings(forSerial serial: String) -> AxisSettings {
-        if let existing = axisSettingsBySerial[serial] { return existing }
-        let made = AxisSettings(serial: serial)
-        axisSettingsBySerial[serial] = made
-        return made
-    }
-
-    func pairAxisSettings() -> AxisSettings {
-        axisSettings(forSerial: joyConPairSerial() ?? "joycon-pair")
-    }
-
     // Per-controller Xbox advanced options (GIP 0x20 stream on/off). Same
     // per-serial model; only the Xbox output mode reads it, sampled off-main by
     // the dispatch task so a live toggle applies without a republish.
@@ -405,6 +385,7 @@ final class BridgeCoordinator {
     }
 
     func start() async {
+        LegacyMigrations.dropLegacyAxisSettings()
         guard consumerTask == nil else { return }
         activity = ActivityToken(ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .latencyCritical],

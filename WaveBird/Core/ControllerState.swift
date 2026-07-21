@@ -72,20 +72,6 @@ struct ControllerState: Sendable {
         )
     }
 
-    // Flip the sign of the requested stick Y axes (our convention is "positive
-    // Y = up", so negating inverts). Applied to the parsed state before the
-    // output session encodes it, so inversion is presentation-agnostic.
-    func invertingY(left: Bool, right: Bool) -> ControllerState {
-        guard left || right else { return self }
-        var copy = self
-        if left  { copy.leftStick.y  = Self.negate(copy.leftStick.y) }
-        if right { copy.rightStick.y = Self.negate(copy.rightStick.y) }
-        return copy
-    }
-
-    // Negation is exact across the symmetric -2047...2047 working range; the
-    // clamp is belt-and-suspenders against an out-of-range axis.
-    private static func negate(_ v: Int16) -> Int16 { Int16(clamping: -Int(v)) }
 }
 
 // Coarse fingerprint of meaningful input, used by the idle-disconnect sweep.
@@ -110,7 +96,7 @@ extension ControllerState {
 
     // Apply per-stick rigid transforms (rotation first, then inversion) on the
     // centered 12-bit sticks. Presentation-agnostic: runs before the encoder,
-    // same stage as invertingY. Identity transforms return self untouched.
+    // right after parsing. Identity transforms return self untouched.
     func applyingStickTransforms(left: StickTransform, right: StickTransform) -> ControllerState {
         guard !left.isIdentity || !right.isIdentity else { return self }
         var copy = self

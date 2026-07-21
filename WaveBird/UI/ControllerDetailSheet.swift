@@ -49,9 +49,6 @@ struct ControllerDetailSheet: View {
         let settings = isPair
             ? coordinator.pairRumbleSettings()
             : serial.map { coordinator.rumbleSettings(forSerial: $0, productID: productID ?? 0) }
-        let axis = isPair
-            ? coordinator.pairAxisSettings()
-            : serial.map { coordinator.axisSettings(forSerial: $0) }
         // Xbox advanced options (GIP 0x20 stream). Solo only — the GIP path
         // doesn't serve a merged Joy-Con pair.
         let xboxSettings = isPair ? nil : serial.map { coordinator.xboxOutputSettings(forSerial: $0) }
@@ -79,7 +76,7 @@ struct ControllerDetailSheet: View {
             Group {
                 switch selectedTab {
                 case .general:
-                    generalTab(live: live, paired: paired, axis: axis, xbox: xboxSettings)
+                    generalTab(live: live, paired: paired, xbox: xboxSettings)
                 case .haptics:
                     hapticsTab(live: live, settings: settings, isReady: isReady)
                 case .about:
@@ -142,7 +139,7 @@ struct ControllerDetailSheet: View {
     }
 
     @ViewBuilder
-    private func generalTab(live: DeviceRecord?, paired: KnownController?, axis: AxisSettings?, xbox: XboxOutputSettings?) -> some View {
+    private func generalTab(live: DeviceRecord?, paired: KnownController?, xbox: XboxOutputSettings?) -> some View {
         let binding = profileBinding(live: live, paired: paired)
         let selectedBase = coordinator.resolveMappingProfile(id: binding.wrappedValue).baseModeID
         Form {
@@ -178,10 +175,6 @@ struct ControllerDetailSheet: View {
                 SettingsLink {
                     Text("Manage Profiles…")
                 }
-            }
-
-            if let axis {
-                StickSettingsSection(settings: axis)
             }
 
             if let xbox, selectedBase == "xboxSeries" {
@@ -370,19 +363,6 @@ struct ControllerDetailSheet: View {
             components.day = -Int(elapsed / 86400)
         }
         return formatter.localizedString(from: components)
-    }
-}
-
-// Stick configuration: per-axis Y inversion. Bound to the per-PID AxisSettings,
-// so toggling takes effect live on the running dispatch task and persists.
-private struct StickSettingsSection: View {
-    @Bindable var settings: AxisSettings
-
-    var body: some View {
-        Section("Sticks") {
-            Toggle("Invert Left Stick Y-Axis", isOn: $settings.invertLeftY)
-            Toggle("Invert Right Stick Y-Axis", isOn: $settings.invertRightY)
-        }
     }
 }
 
