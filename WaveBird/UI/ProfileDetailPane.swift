@@ -10,6 +10,7 @@ struct ProfileDetailPane: View {
     @State private var pendingBaseChange: String?
     @State private var showLeftStickOptions = false
     @State private var showRightStickOptions = false
+    @State private var activeMappingControlID: String?
 
     init(coordinator: BridgeCoordinator, profile: MappingProfile) {
         self.coordinator = coordinator
@@ -53,24 +54,7 @@ struct ProfileDetailPane: View {
 
             Section("Buttons") {
                 ForEach(MappingControls.controls(forModeID: draft.baseModeID)) { control in
-                    Picker(selection: choiceBinding(control.id)) {
-                        Text("Default").tag("default")
-                        Text("Off").tag("off")
-                        ForEach(PhysicalButton.Family.allCases) { family in
-                            Section(family.rawValue) {
-                                ForEach(PhysicalButton.allCases.filter { $0.family == family }) { button in
-                                    Text(button.displayName).tag(button.rawValue)
-                                }
-                            }
-                        }
-                    } label: {
-                        if let glyph = MappingControlSymbols.symbol(forControlID: control.id) {
-                            Label(control.displayName, systemImage: glyph)
-                        } else {
-                            Text(control.displayName)
-                        }
-                    }
-                    .disabled(isReadOnly)
+                    controlRow(control)
                 }
 
                 stickRow("Left Stick", systemImage: "l.joystick",
@@ -133,27 +117,126 @@ struct ProfileDetailPane: View {
         )
     }
 
-    private func choiceBinding(_ controlID: String) -> Binding<String> {
-        Binding(
-            get: {
-                switch draft.mapping[controlID] {
-                case .none: "default"
-                case .off: "off"
-                case .sources(let sources): sources.first?.token ?? "default"
+    @ViewBuilder
+    private func controlLabel(_ control: OutputControl) -> some View {
+        if let glyph = MappingControlSymbols.symbol(forControlID: control.id) {
+            Label(control.displayName, systemImage: glyph)
+        } else {
+            Text(control.displayName)
+        }
+    }
+
+    private func controlRow(_ control: OutputControl) -> some View {
+        LabeledContent {
+            Button {
+                activeMappingControlID = control.id
+            } label: {
+                HStack(spacing: 4) {
+                    Text(summary(for: control.id))
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-            },
-            set: { raw in
-                switch raw {
-                case "default": draft.mapping[controlID] = nil
-                case "off": draft.mapping[controlID] = .off
-                default:
-                    if let source = MappingSource(token: raw) {
-                        draft.mapping[controlID] = .sources([source])
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isReadOnly)
+            .popover(isPresented: Binding(
+                get: { activeMappingControlID == control.id },
+                set: { if !$0 && activeMappingControlID == control.id { activeMappingControlID = nil } }
+            )) {
+                mappingOptions(for: control)
+            }
+        } label: {
+            controlLabel(control)
+        }
+    }
+
+    // Digital sources for every control; Task 4 adds analog sources for
+    // analog-trigger outputs.
+    private func availableSources(for control: OutputControl) -> [MappingSource] {
+        PhysicalButton.allCases.map { MappingSource.button($0) }
+    }
+
+    private func mappingOptions(for control: OutputControl) -> some View {
+        let sources = availableSources(for: control)
+        return Form {
+            Section {
+                optionRow("Default", isOn: isDefaultChoice(control.id)) { setDefault(control.id) }
+                optionRow("Off", isOn: draft.mapping[control.id] == .off) { setOff(control.id) }
+            }
+            ForEach(PhysicalButton.Family.allCases) { family in
+                let group = sources.filter { $0.family == family }
+                if !group.isEmpty {
+                    Section(family.rawValue) {
+                        ForEach(group, id: \.self) { source in
+                            optionRow(source.displayName, isOn: isSelected(source, control.id)) {
+                                toggle(source, control.id)
+                            }
+                        }
                     }
                 }
-                commit()
             }
-        )
+        }
+        .formStyle(.grouped)
+        .frame(width: 320, height: 420)
+    }
+
+    private func optionRow(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                Spacer()
+                if isOn {
+                    Image(systemName: "checkmark").foregroundStyle(.tint)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func summary(for controlID: String) -> String {
+        switch draft.mapping[controlID] {
+        case .none: return "Default"
+        case .off: return "Off"
+        case .sources(let sources):
+            if sources.isEmpty { return "Default" }
+            if sources.count == 1 { return sources[0].displayName }
+            if sources.count <= 3 {
+                return sources.map { $0.displayName.replacingOccurrences(of: " Button", with: "") }
+                    .joined(separator: " + ")
+            }
+            return "\(sources.count) inputs"
+        }
+    }
+
+    private func isDefaultChoice(_ id: String) -> Bool {
+        switch draft.mapping[id] {
+        case .none: return true
+        case .sources(let s): return s.isEmpty
+        case .off: return false
+        }
+    }
+
+    private func isSelected(_ source: MappingSource, _ id: String) -> Bool {
+        if case .sources(let sources) = draft.mapping[id] { return sources.contains(source) }
+        return false
+    }
+
+    private func setDefault(_ id: String) { draft.mapping[id] = nil; commit() }
+    private func setOff(_ id: String) { draft.mapping[id] = .off; commit() }
+
+    private func toggle(_ source: MappingSource, _ id: String) {
+        var current: [MappingSource]
+        if case .sources(let sources) = draft.mapping[id] { current = sources } else { current = [] }
+        if let index = current.firstIndex(of: source) {
+            current.remove(at: index)
+        } else {
+            current.append(source)
+        }
+        draft.mapping[id] = current.isEmpty ? nil : .sources(current)
+        commit()
     }
 
     // Compact stick row: [glyph] title ........ ⓘ, transforms in a popover
