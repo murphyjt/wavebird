@@ -20,8 +20,6 @@ No stick/D-pad remapping changes. No "AND"/chord combining — sources are alway
 
 ## Constraints (from CLAUDE.md)
 
-- Persisted-data compatibility: existing custom-profile blobs (single-source
-  `mapping` values) must decode unchanged.
 - Hardware validation is the bottleneck. Landed as two commits, each flagged for a
   hardware pass: (a) digital multi-source; (b) analog trigger sources.
 - The `applyingMapping` identity fast-path (empty overrides + no-op transforms →
@@ -134,25 +132,24 @@ popover — same pattern as the stick-transform popover.
 
 ### 5. Persistence
 
-`MappingChoice` gets a custom `Codable`:
+`MappingChoice` gets a custom `Codable`, encoding as an array of string tokens:
 
-- Encode `.off` → the string `"off"`; `.sources` → an array of source strings.
-- `MappingSource` string form: `.button(b)` → `b.rawValue`; `.leftAnalogTrigger` →
+- `.off` → `["off"]`; `.sources` → the source tokens.
+- `MappingSource` token: `.button(b)` → `b.rawValue`; `.leftAnalogTrigger` →
   `"analogL"`; `.rightAnalogTrigger` → `"analogR"` (tokens no `PhysicalButton`
   rawValue uses).
-- Decode accepts **either** a single string (legacy: `"off"` → `.off`; any button
-  rawValue → `.sources([.button(b)])`) **or** an array of source strings. Unknown
-  tokens in an array are dropped; an array that resolves to empty is treated as
+- Decode: an array containing `"off"` → `.off`; otherwise map tokens to
+  `MappingSource`, dropping unknowns; an array that resolves to empty is treated as
   Default (key omitted on next save).
 
-`PhysicalButton` raw values are untouched (still the persistence format). No
-`MappingProfile` field changes — `mapping` stays `[String: MappingChoice]`.
+`PhysicalButton` raw values are the persistence format. No `MappingProfile` field
+changes — `mapping` stays `[String: MappingChoice]`.
 
 ### 6. Work split
 
 **Commit A — digital multi-source** (needs hardware pass for the OR path):
 `MappingSource` (button case only wired into UI), `MappingChoice` set model +
-back-compat decode, `Override.sources` + OR apply for digital drivers and the
+array-token `Codable`, `Override.sources` + OR apply for digital drivers and the
 button→trigger path, the popover-checklist UI. Existing single-source profiles stay
 byte-identical; the new capability is OR of digital buttons.
 
@@ -168,8 +165,7 @@ New `MappingApplyTests` (pure functions over bytes/state, no hardware):
   neither.
 - `.off` → driver cleared; Default (absent) → `applyingMapping` returns `self`
   (fast-path intact).
-- Legacy decode: `"b"` → `.sources([.button(.b)])`; `"off"` → `.off`. New decode:
-  `["l","sl"]` round-trips; `["l","analogL"]` round-trips.
+- Decode round-trips: `["off"]` → `.off`; `["l","sl"]`; `["l","analogL"]`.
 - Analog (Commit B): analog trigger driver from an analog source preserves the value
   (input travel 100 → output analog 100); from a digital source → `0xFF`, digital
   flag set; max combine (button `0xFF` vs analog 50 → `0xFF`); partial analog (50) →
