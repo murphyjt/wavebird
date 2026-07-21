@@ -91,10 +91,10 @@ struct MappingControlSymbolsTests {
         #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.ps") == "playstation.logo")
         #expect(MappingControlSymbols.symbol(forControlID: "dualSense.create") == "square.and.arrow.up")
         #expect(MappingControlSymbols.symbol(forControlID: "dualSense.ps") == "playstation.logo")
+        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.touchpad") == "rectangle.and.hand.point.up.left")
     }
 
     @Test func unmappedControlFallsBackToNil() {
-        #expect(MappingControlSymbols.symbol(forControlID: "dualShock4.touchpad") == nil)
         #expect(MappingControlSymbols.symbol(forControlID: "whatever.zzz") == nil)
     }
 }
