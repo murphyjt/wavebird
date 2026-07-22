@@ -258,15 +258,27 @@ struct ProfileDetailPane: View {
                           transform: Binding<StickTransform>,
                           isPresented: Binding<Bool>) -> some View {
         LabeledContent {
-            Button { isPresented.wrappedValue = true } label: {
-                Image(systemName: "info.circle")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(isReadOnly)
-            .popover(isPresented: isPresented, arrowEdge: .trailing) {
-                stickOptions(transform)
+            HStack(spacing: 8) {
+                Picker("", selection: transform.source) {
+                    Text("Default").tag(StickSource.default)
+                    Text("Left Stick").tag(StickSource.left)
+                    Text("Right Stick").tag(StickSource.right)
+                }
+                .labelsHidden()
+                .fixedSize()
+                .disabled(isReadOnly)
+                .onChange(of: transform.wrappedValue.source) { commit() }
+
+                Button { isPresented.wrappedValue = true } label: {
+                    Image(systemName: "info.circle")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(isReadOnly)
+                .popover(isPresented: isPresented, arrowEdge: .trailing) {
+                    stickOptions(transform)
+                }
             }
         } label: {
             Label(title, systemImage: systemImage)

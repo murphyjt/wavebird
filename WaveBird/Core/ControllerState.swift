@@ -94,15 +94,25 @@ extension ControllerState {
                        tl: triggerL >> 4, tr: triggerR >> 4)
     }
 
-    // Apply per-stick rigid transforms (rotation first, then inversion) on the
-    // centered 12-bit sticks. Presentation-agnostic: runs before the encoder,
-    // right after parsing. Identity transforms return self untouched.
+    // Apply per-stick transforms on the centered 12-bit sticks. The source
+    // physical stick is resolved first (from the original self, where both
+    // sticks are still visible), then geometry (rotation first, then inversion)
+    // runs on the resolved source. Presentation-agnostic: runs before the
+    // encoder, right after parsing. Identity transforms return self untouched.
     func applyingStickTransforms(left: StickTransform, right: StickTransform) -> ControllerState {
         guard !left.isIdentity || !right.isIdentity else { return self }
         var copy = self
-        copy.leftStick = Self.transform(leftStick, left)
-        copy.rightStick = Self.transform(rightStick, right)
+        copy.leftStick  = Self.transform(sourceStick(left.source, naturalLeft: true), left)
+        copy.rightStick = Self.transform(sourceStick(right.source, naturalLeft: false), right)
         return copy
+    }
+
+    private func sourceStick(_ source: StickSource, naturalLeft: Bool) -> SIMD2<Int16> {
+        switch source {
+        case .default: return naturalLeft ? leftStick : rightStick
+        case .left:    return leftStick
+        case .right:   return rightStick
+        }
     }
 
     private static func transform(_ v: SIMD2<Int16>, _ t: StickTransform) -> SIMD2<Int16> {
