@@ -15,9 +15,10 @@ enum StickRotation: String, CaseIterable, Codable, Sendable, Hashable, Identifia
     }
 }
 
-// Which physical stick feeds an output stick. Raw values are persistence — never rename.
+// Which physical stick feeds an output stick (or Off = force neutral). Raw
+// values are persistence — never rename.
 enum StickSource: String, CaseIterable, Codable, Sendable, Hashable, Identifiable {
-    case `default`, left, right
+    case `default`, off, left, right
     var id: String { rawValue }
 }
 
