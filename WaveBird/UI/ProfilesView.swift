@@ -40,7 +40,7 @@ struct ProfilesView: View {
             .accessibilityHidden(true)
         }
         .onAppear { reconcileSelection() }
-        .confirmationDialog(
+        .alert(
             "Delete “\(pendingDelete?.name ?? "")”?",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
         ) {
@@ -54,6 +54,7 @@ struct ProfilesView: View {
                 }
                 pendingDelete = nil
             }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
         } message: {
             Text("Controllers using this profile revert to the default profile for its emulated controller.")
         }

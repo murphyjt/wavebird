@@ -118,24 +118,28 @@ struct ControllerDetailSheet: View {
             }
             .padding(20)
         }
-        .sheet(item: $forgetConfirmation) { confirm in
-            ForgetConfirmationSheet(
-                displayName: confirm.displayName,
-                onForget: {
-                    let serial = confirm.serial
-                    forgetConfirmation = nil
-                    // Defer window dismiss so SwiftUI can finish dismissing the
-                    // confirmation sheet first; calling dismissWindow while a
-                    // child sheet is still animating leaves the window open.
-                    Task { @MainActor in
-                        await coordinator.forgetController(serial: serial)
-                        onDismiss()
-                    }
-                },
-                onCancel: {
-                    forgetConfirmation = nil
+        .alert(
+            "Are you sure you want to forget \u{201C}\(forgetConfirmation?.displayName ?? "")\u{201D}?",
+            isPresented: Binding(
+                get: { forgetConfirmation != nil },
+                set: { if !$0 { forgetConfirmation = nil } }
+            ),
+            presenting: forgetConfirmation
+        ) { confirm in
+            Button("Forget", role: .destructive) {
+                let serial = confirm.serial
+                forgetConfirmation = nil
+                // Defer window dismiss so SwiftUI can finish dismissing the
+                // alert first; calling dismissWindow while it's still
+                // animating leaves the window open.
+                Task { @MainActor in
+                    await coordinator.forgetController(serial: serial)
+                    onDismiss()
                 }
-            )
+            }
+            Button("Cancel", role: .cancel) { forgetConfirmation = nil }
+        } message: { _ in
+            Text("This device will not reconnect automatically. You will have to connect it again if you want to use it later.")
         }
     }
 

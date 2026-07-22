@@ -57,18 +57,24 @@ struct ContentView: View {
         .sheet(isPresented: $showSetupSheet) {
             SetupSheet { showSetupSheet = false }
         }
-        .sheet(item: $forgetConfirmation) { confirm in
-            ForgetConfirmationSheet(
-                displayName: confirm.displayName,
-                onForget: {
-                    let serial = confirm.serial
-                    forgetConfirmation = nil
-                    Task { @MainActor in
-                        await coordinator.forgetController(serial: serial)
-                    }
-                },
-                onCancel: { forgetConfirmation = nil }
-            )
+        .alert(
+            "Are you sure you want to forget \u{201C}\(forgetConfirmation?.displayName ?? "")\u{201D}?",
+            isPresented: Binding(
+                get: { forgetConfirmation != nil },
+                set: { if !$0 { forgetConfirmation = nil } }
+            ),
+            presenting: forgetConfirmation
+        ) { confirm in
+            Button("Forget", role: .destructive) {
+                let serial = confirm.serial
+                forgetConfirmation = nil
+                Task { @MainActor in
+                    await coordinator.forgetController(serial: serial)
+                }
+            }
+            Button("Cancel", role: .cancel) { forgetConfirmation = nil }
+        } message: { _ in
+            Text("This device will not reconnect automatically. You will have to connect it again if you want to use it later.")
         }
         .sheet(isPresented: Binding(
             get: { coordinator.pairingPrompt != nil },
