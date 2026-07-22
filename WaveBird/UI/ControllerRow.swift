@@ -13,13 +13,10 @@ struct LiveControllerRow: View {
     // identity + the shared VHID state.
     var displayNameOverride: String? = nil
     var vhidActiveOverride: Bool? = nil
-    // When non-nil, this row represents a Joy-Con pair and holding Option
-    // swaps the bottom action to Split Paired Controllers. Mirrors macOS's
-    // Quit → Force Quit alternate-action convention.
-    var optionHeld: Bool = false
     var onSplit: (() -> Void)? = nil
     let onSelect: () -> Void
     let onDisconnect: () -> Void
+    let onForget: () -> Void
 
     private var vhidActive: Bool {
         vhidActiveOverride ?? isVHIDActive
@@ -30,54 +27,43 @@ struct LiveControllerRow: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Button(action: onSelect) {
-                HStack(spacing: 8) {
-                    Image(systemName: "gamecontroller.fill")
-                        .font(.title3)
-                        .foregroundStyle(.white)
-                        .frame(width: 30, height: 30)
-                        .background(vhidActive ? record.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed : Color.secondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(displayName)
-                                .foregroundStyle(.primary)
-                        }
-                        HStack(spacing: 6) {
-                            Text(stateLabel(record.connectionState))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: "gamecontroller.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(vhidActive ? record.firmware?.controllerType == 0x03 ? .gamecubeIndigo : .nintendoRed : Color.secondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(displayName)
+                            .foregroundStyle(.primary)
                     }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                    HStack(spacing: 6) {
+                        Text(stateLabel(record.connectionState))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .padding(10)
-                .contentShape(Rectangle())
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.plain)
-
+            .padding(10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
             if record.connectionState == .ready {
-                Divider()
-                HStack {
-                    if optionHeld, let onSplit {
-                        Button("Split Paired Controllers", action: onSplit)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                            .help("Tears down the merged Joy-Con virtual device. Both Joy-Cons stay connected but won't auto-pair again this session.")
-                    } else {
-                        Button("Disconnect Controller", action: onDisconnect)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                            .help("Drops the Bluetooth link. Press any button on the controller to reconnect.")
-                    }
-                    Spacer()
+                Button("Disconnect Controller", action: onDisconnect)
+                if let onSplit {
+                    Button("Split Paired Controllers", action: onSplit)
                 }
-                .padding(10)
+                Divider()
             }
+            Button("Forget Controller", role: .destructive, action: onForget)
         }
     }
 
@@ -95,6 +81,7 @@ struct LiveControllerRow: View {
 struct OfflineControllerRow: View {
     let paired: KnownController
     let onSelect: () -> Void
+    let onForget: () -> Void
 
     var body: some View {
         Button(action: onSelect) {
@@ -123,6 +110,9 @@ struct OfflineControllerRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Forget Controller", role: .destructive, action: onForget)
+        }
     }
 }
 
