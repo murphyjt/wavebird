@@ -42,13 +42,9 @@ struct LiveControllerRow: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(displayName)
-                                .font(.default)
                                 .foregroundStyle(.primary)
                         }
                         HStack(spacing: 6) {
-                            Circle()
-                                .fill(stateColor(record.connectionState))
-                                .frame(width: 10, height: 10)
                             Text(stateLabel(record.connectionState))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -83,8 +79,6 @@ struct LiveControllerRow: View {
                 .padding(10)
             }
         }
-        .background(Color.secondary.opacity(0.065))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func stateLabel(_ s: DeviceConnectionState) -> String {
@@ -94,15 +88,6 @@ struct LiveControllerRow: View {
         case .connected, .ready: "Connected"
         case .disconnected: "Not Connected"
         case .failed(let msg): "Failed: \(msg)"
-        }
-    }
-
-    private func stateColor(_ s: DeviceConnectionState) -> Color {
-        switch s {
-        case .connected, .ready: .green
-        case .connecting, .discovered: .orange
-        case .disconnected: .red
-        case .failed: .red
         }
     }
 }
@@ -122,12 +107,8 @@ struct OfflineControllerRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(paired.displayName)
-                        .font(.default)
                         .foregroundStyle(.primary)
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 10, height: 10)
                         Text("Not Connected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -139,8 +120,6 @@ struct OfflineControllerRow: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(10)
-            .background(Color.secondary.opacity(0.065))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

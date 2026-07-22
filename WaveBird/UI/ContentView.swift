@@ -211,35 +211,39 @@ struct ContentView: View {
     }
 
     private var controllerList: some View {
-        VStack(spacing: 8) {
-            ForEach(coordinator.listEntries) { entry in
-                if let record = entry.live {
-                    let pair = coordinator.joyConPair
-                    let isPairLeft = pair?.leftID == record.id
-                    LiveControllerRow(
-                        record: record,
-                        paired: entry.paired,
-                        isVHIDActive: entry.vhidActive,
-                        displayNameOverride: isPairLeft ? coordinator.listDisplayName(for: entry) : nil,
-                        vhidActiveOverride: isPairLeft ? coordinator.joyConPairVHIDActive : nil,
-                        optionHeld: optionHeld,
-                        onSplit: isPairLeft ? {
-                            Task { await coordinator.splitJoyConPair() }
-                            // The detail window keys off this entry's L serial.
-                            // After split it would re-resolve as a solo L row;
-                            // closing matches the explicit-split UX in the
-                            // detail sheet's own Split button.
-                            dismissWindow(id: "controller-detail")
-                        } : nil,
-                        onSelect: { openDetail(for: entry.id) },
-                        onDisconnect: { Task { await coordinator.disconnectController(record.id) } }
-                    )
-                } else if let paired = entry.paired {
-                    OfflineControllerRow(paired: paired) {
-                        openDetail(for: entry.id)
+        List {
+            Section {
+                ForEach(coordinator.listEntries) { entry in
+                    if let record = entry.live {
+                        let pair = coordinator.joyConPair
+                        let isPairLeft = pair?.leftID == record.id
+                        LiveControllerRow(
+                            record: record,
+                            paired: entry.paired,
+                            isVHIDActive: entry.vhidActive,
+                            displayNameOverride: isPairLeft ? coordinator.listDisplayName(for: entry) : nil,
+                            vhidActiveOverride: isPairLeft ? coordinator.joyConPairVHIDActive : nil,
+                            optionHeld: optionHeld,
+                            onSplit: isPairLeft ? {
+                                Task { await coordinator.splitJoyConPair() }
+                                // The detail window keys off this entry's L serial.
+                                // After split it would re-resolve as a solo L row;
+                                // closing matches the explicit-split UX in the
+                                // detail sheet's own Split button.
+                                dismissWindow(id: "controller-detail")
+                            } : nil,
+                            onSelect: { openDetail(for: entry.id) },
+                            onDisconnect: { Task { await coordinator.disconnectController(record.id) } }
+                        )
+                    } else if let paired = entry.paired {
+                        OfflineControllerRow(paired: paired) {
+                            openDetail(for: entry.id)
+                        }
                     }
                 }
             }
         }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
     }
 }
