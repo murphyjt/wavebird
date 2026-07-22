@@ -28,6 +28,7 @@ struct ProfilePickerSheet: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Picker("Profile", selection: $selectedProfileID) {

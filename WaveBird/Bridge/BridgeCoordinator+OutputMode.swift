@@ -170,7 +170,7 @@ extension BridgeCoordinator {
     // here, not in makeVirtualHID, so the pair path is covered too).
     func failVirtualHID(for id: DeviceID) async {
         hidAccessIssue = HIDAccessIssue.current()
-        devices[id]?.connectionState = .failed("Failed to create virtual HID device")
+        devices[id]?.connectionState = .failed("Couldn't create virtual HID device")
         let until = ContinuousClock.now.advanced(by: .seconds(60))
         vhidFailureCooldowns[id] = until
         // Self-expire: accessory mode never posts didBecomeActive, so the
