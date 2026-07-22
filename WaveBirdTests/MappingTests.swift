@@ -409,6 +409,23 @@ struct StickTransformTests {
             left: .init(invertX: true, invertY: true, rotation: .none), right: .init())
         #expect(out.leftStick == SIMD2<Int16>(2047, -2047))
     }
+
+    @Test func sourceSwapsPhysicalSticks() {
+        let input = s(1000, 200, -1000, -200)
+        // Left output ← right physical stick, right output ← left physical stick.
+        let out = input.applyingStickTransforms(
+            left: .init(source: .right), right: .init(source: .left))
+        #expect(out.leftStick == input.rightStick)   // (-1000, -200)
+        #expect(out.rightStick == input.leftStick)   // (1000, 200)
+    }
+
+    @Test func geometryAppliesAfterSourceSwap() {
+        // source is the first memberwise field; invertX runs on the resolved source.
+        let out = s(1000, 200, -1000, -200).applyingStickTransforms(
+            left: StickTransform(source: .right, invertX: true), right: .init())
+        // Left output takes the right stick (-1000, -200), then negates X.
+        #expect(out.leftStick == SIMD2<Int16>(1000, -200))
+    }
 }
 
 struct MappingSpecTransformTests {
