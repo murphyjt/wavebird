@@ -10,6 +10,7 @@ struct ControllerDetailSheet: View {
     let entryID: String
     let onDismiss: () -> Void
 
+    @Environment(\.openWindow) private var openWindow
     @State private var selectedTab: Tab = .general
     @State private var forgetConfirmation: ForgetConfirmation?
 
@@ -172,9 +173,7 @@ struct ControllerDetailSheet: View {
                     .pickerStyle(.menu)
                     .fixedSize()
                 }
-                SettingsLink {
-                    Text("Manage Profiles…")
-                }
+                Button("Manage Profiles…") { openWindow(id: "profiles") }
             }
 
             if let xbox, selectedBase == "xboxSeries" {
