@@ -426,6 +426,14 @@ struct StickTransformTests {
         // Left output takes the right stick (-1000, -200), then negates X.
         #expect(out.leftStick == SIMD2<Int16>(1000, -200))
     }
+
+    @Test func offSourceNeutralizesStick() {
+        // Off zeroes just that output; the other stick's Default is untouched.
+        let out = s(1000, 200, -1000, -200).applyingStickTransforms(
+            left: .init(source: .off), right: .init())
+        #expect(out.leftStick == SIMD2<Int16>(0, 0))
+        #expect(out.rightStick == SIMD2<Int16>(-1000, -200))
+    }
 }
 
 struct MappingSpecTransformTests {

@@ -261,6 +261,7 @@ struct ProfileDetailPane: View {
             HStack(spacing: 8) {
                 Picker("", selection: transform.source) {
                     Text("Default").tag(StickSource.default)
+                    Text("Off").tag(StickSource.off)
                     Text("Left Stick").tag(StickSource.left)
                     Text("Right Stick").tag(StickSource.right)
                 }

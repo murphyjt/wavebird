@@ -110,6 +110,7 @@ extension ControllerState {
     private func sourceStick(_ source: StickSource, naturalLeft: Bool) -> SIMD2<Int16> {
         switch source {
         case .default: return naturalLeft ? leftStick : rightStick
+        case .off:     return .zero
         case .left:    return leftStick
         case .right:   return rightStick
         }
