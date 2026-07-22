@@ -10,7 +10,6 @@ struct WaveBirdApp: App {
             ContentView(coordinator: appDelegate.coordinator)
                 .frame(width: 512)
         }
-        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(openInBackground ? .suppressed : .automatic)
         .commands {

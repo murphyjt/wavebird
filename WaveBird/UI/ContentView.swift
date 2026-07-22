@@ -19,32 +19,41 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            header
+        VStack(spacing: 8) {
             if let reason = coordinator.transportUnavailableReason {
                 transportBanner(reason)
+                    .padding(.horizontal, 20)
             }
             if let issue = coordinator.hidAccessIssue {
                 HIDAccessBanner(issue: issue)
+                    .padding(.horizontal, 20)
             }
             if coordinator.listEntries.isEmpty {
                 emptyState
             } else {
                 controllerList
             }
-            Spacer(minLength: 0)
-            HStack {
-                if coordinator.hasUnpairedJoyCon {
-                    Button("Pair Joy-Cons...") {
+        }
+        .frame(minWidth: 480, minHeight: 280, maxHeight: 420)
+        .toolbar {
+            if coordinator.hasUnpairedJoyCon {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Pair Joy-Cons") {
                         Task { await coordinator.pairJoyCons() }
                     }
                 }
-                Spacer()
-                Button("Set up Game Controller...") { showSetupSheet = true }
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button("Profiles…") { openWindow(id: "profiles") }
+
+                Button {
+                    showSetupSheet = true
+                } label: {
+                    Label("Set up Game Controller", systemImage: "plus")
+                }
+                .help("Set up Game Controller…")
             }
         }
-        .padding(20)
-        .frame(minWidth: 480, minHeight: 380)
         .sheet(isPresented: $showSetupSheet) {
             SetupSheet { showSetupSheet = false }
         }
@@ -183,15 +192,6 @@ struct ContentView: View {
         })
     }
 
-    private var header: some View {
-        HStack {
-            Text("Controllers")
-                .font(.headline)
-            Spacer()
-            Button("Profiles…") { openWindow(id: "profiles") }
-        }
-    }
-
     private func transportBanner(_ reason: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -207,28 +207,16 @@ struct ContentView: View {
     }
 
     private var emptyState: some View {
-        HStack {
-            VStack(spacing: 12) {
-                Image(systemName: "gamecontroller")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.tertiary)
-                Text("No controller connected")
-                    .font(.headline)
-                Text("Hold the SYNC Button on the Nintendo Switch 2 Controller that you'd like to pair.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(20)
-            .frame(width: 384)
+        ContentUnavailableView {
+            Label("No Controller Connected", systemImage: "gamecontroller")
+        } description: {
+            Text("Hold the SYNC Button on the Nintendo Switch 2 Controller that you'd like to pair.")
         }
-        .padding(.vertical, 36)
-        .frame(maxWidth: .infinity)
     }
 
     private var controllerList: some View {
         Form {
-            Section {
+            Section("Controllers") {
                 ForEach(coordinator.listEntries) { entry in
                     if let record = entry.live {
                         let pair = coordinator.joyConPair
@@ -274,6 +262,5 @@ struct ContentView: View {
             }
         }
         .formStyle(.grouped)
-        .padding(.horizontal, -20)
     }
 }
