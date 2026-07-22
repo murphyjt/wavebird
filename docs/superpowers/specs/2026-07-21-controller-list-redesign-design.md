@@ -63,10 +63,14 @@ list occupies the middle region and scrolls when tall.
 - **Drop the per-card container.** Remove each row's own
   `.background(...)/.clipShape(...)`; the grouped list provides the container and
   separators.
-- **Opportunistic macOS-15 nudge.** While rewriting, drop `.font(.default)` (use
-  the natural default font). No behavior change; removes the one call the
-  "lower deployment target to macOS 15" note flags. Not a goal of this work,
-  just free while we're here.
+- **Drop `.font(.default)`.** Both rows currently apply `.font(.default)` to the
+  name `Text` (`ControllerRow.swift:45` in `LiveControllerRow`, `:125` in
+  `OfflineControllerRow`). Remove both as part of the row rewrite — the name
+  `Text` takes the natural default font, no `.font` modifier. This is deliberate
+  work here, not an aside: `.font(.default)` is a macOS-26-only API and these two
+  calls are the **only** occurrences in the app (verified by grep), so clearing
+  them as we rewrite the rows removes the sole code blocker to the macOS-15
+  target lowering that follows (see below). No visual change on macOS 26.
 
 ### 3. Context menu
 
@@ -125,6 +129,17 @@ swap is gone. Delete:
 - Not touching the menu-bar list, which renders separately from `MenuBarContent`.
 - Not adding an "Erase Controller Settings" op — the second menu item is
   `Forget Controller` mapping to the existing `forgetController(serial:)`.
+
+## Follow-up: lower deployment target to macOS 15
+
+**Separate task, after this redesign lands.** Once the two `.font(.default)`
+calls are gone (§2), the codebase is expected to be macOS-15-safe. The follow-up
+is to set `MACOSX_DEPLOYMENT_TARGET = 15.0` across the build configs currently at
+`26.4` / `26.0` (`WaveBird.xcodeproj/project.pbxproj`, ~6 entries) and build to
+surface any remaining macOS-26-only API use. It is **not** part of this branch —
+this spec only guarantees it removes the one known blocker. The target change
+gets its own build/verification pass (and likely its own commit/branch) so a
+compile failure there can't be confused with the UI work.
 
 ## Testing & verification
 
