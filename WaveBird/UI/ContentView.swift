@@ -227,7 +227,7 @@ struct ContentView: View {
     }
 
     private var controllerList: some View {
-        List {
+        Form {
             Section {
                 ForEach(coordinator.listEntries) { entry in
                     if let record = entry.live {
@@ -273,7 +273,7 @@ struct ContentView: View {
                 }
             }
         }
-        .listStyle(.inset)
-        .scrollContentBackground(.hidden)
+        .formStyle(.grouped)
+        .padding(.horizontal, -20)
     }
 }

@@ -51,7 +51,7 @@ struct LiveControllerRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(10)
+            .padding(.vertical, 0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -108,7 +108,7 @@ struct OfflineControllerRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(10)
+            .padding(.vertical, 0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
