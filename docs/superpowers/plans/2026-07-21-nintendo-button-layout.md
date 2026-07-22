@@ -42,7 +42,7 @@
   - `MappingControls.nintendoLayoutSources(forModeID:) -> [String: MappingSource]`
   - unchanged signature: `ResolvedMappingSpec.resolve(profile:) -> ResolvedMappingSpec`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `WaveBirdTests/MappingTests.swift`:
 
@@ -106,12 +106,12 @@ struct NintendoLayoutTests {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `xcodebuild -project WaveBird.xcodeproj -scheme WaveBird -destination 'platform=macOS' test -only-testing:WaveBirdTests/NintendoLayoutTests`
 Expected: FAIL to build — `useNintendoLayout` and `nintendoLayoutSources` don't exist.
 
-- [ ] **Step 3: Add the by-label map to `MappingControls.swift`**
+- [x] **Step 3: Add the by-label map to `MappingControls.swift`**
 
 Add these members inside `enum MappingControls` (after `controls(forModeID:)`):
 
@@ -134,7 +134,7 @@ Add these members inside `enum MappingControls` (after `controls(forModeID:)`):
     ]
 ```
 
-- [ ] **Step 4: Add the `useNintendoLayout` field to `MappingProfile.swift`**
+- [x] **Step 4: Add the `useNintendoLayout` field to `MappingProfile.swift`**
 
 In `struct MappingProfile`, add after `rightStick`:
 
@@ -154,7 +154,7 @@ In `init(from:)`, add after the `rightStick` line:
         useNintendoLayout = try c.decodeIfPresent(Bool.self, forKey: .useNintendoLayout) ?? false
 ```
 
-- [ ] **Step 5: Inject by-label defaults in `resolve`**
+- [x] **Step 5: Inject by-label defaults in `resolve`**
 
 In `ResolvedMappingSpec.resolve(profile:)`, after the existing `for control in controls { … }` loop and before `return`, insert:
 
@@ -170,17 +170,17 @@ In `ResolvedMappingSpec.resolve(profile:)`, after the existing `for control in c
         }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `xcodebuild -project WaveBird.xcodeproj -scheme WaveBird -destination 'platform=macOS' test -only-testing:WaveBirdTests/NintendoLayoutTests`
 Expected: PASS.
 
-- [ ] **Step 7: Run the full suite (no regressions)**
+- [x] **Step 7: Run the full suite (no regressions)**
 
 Run: `xcodebuild -project WaveBird.xcodeproj -scheme WaveBird -destination 'platform=macOS' test -only-testing:WaveBirdTests`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add WaveBird/HID/MappingControls.swift WaveBird/Profiles/MappingProfile.swift WaveBirdTests/MappingTests.swift
@@ -202,7 +202,7 @@ and PlayStation. User overrides always win." \
 - Consumes: `MappingControls.nintendoLayoutSources(forModeID:)`, `draft.useNintendoLayout`, existing `commit()`, `isReadOnly`.
 - Produces: no new API.
 
-- [ ] **Step 1: Add the conditional toggle at the top of the Buttons section**
+- [x] **Step 1: Add the conditional toggle at the top of the Buttons section**
 
 In `body`, inside `Section("Buttons") { … }`, add this as the first child (before the `ForEach(MappingControls.controls(...))`):
 
@@ -216,17 +216,17 @@ In `body`, inside `Section("Buttons") { … }`, add this as the first child (bef
                 }
 ```
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `xcodebuild -project WaveBird.xcodeproj -scheme WaveBird -configuration Debug -destination 'platform=macOS' build`
 Expected: `** BUILD SUCCEEDED **`
 
-- [ ] **Step 3: Run the suite (no regressions)**
+- [x] **Step 3: Run the suite (no regressions)**
 
 Run: `xcodebuild -project WaveBird.xcodeproj -scheme WaveBird -destination 'platform=macOS' test -only-testing:WaveBirdTests`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add WaveBird/UI/ProfileDetailPane.swift
