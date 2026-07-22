@@ -16,7 +16,7 @@ struct LiveControllerRow: View {
     var onSplit: (() -> Void)? = nil
     let onSelect: () -> Void
     let onDisconnect: () -> Void
-    let onForget: () -> Void
+    var onForget: (() -> Void)? = nil
 
     private var vhidActive: Bool {
         vhidActiveOverride ?? isVHIDActive
@@ -63,7 +63,9 @@ struct LiveControllerRow: View {
                 }
                 Divider()
             }
-            Button("Forget Controller", role: .destructive, action: onForget)
+            if let onForget {
+                Button("Forget Controller", role: .destructive, action: onForget)
+            }
         }
     }
 
