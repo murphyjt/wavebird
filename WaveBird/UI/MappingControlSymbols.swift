@@ -8,6 +8,28 @@ enum MappingControlSymbols {
         return bySuffix[suffix]
     }
 
+    // Glyph for a mapping SOURCE (a physical Nintendo button, or GC analog
+    // trigger travel). Same accent-not-signifier rule: nil when no faithful
+    // glyph exists, so the summary falls back to text for that source.
+    static func symbol(forSource source: MappingSource) -> String? {
+        switch source {
+        case .button(let b): return bySource[b]
+        case .leftAnalogTrigger: return "lt.rectangle.roundedtop"
+        case .rightAnalogTrigger: return "rt.rectangle.roundedtop"
+        }
+    }
+
+    private static let bySource: [PhysicalButton: String] = [
+        .a: "a.circle", .b: "b.circle", .x: "x.circle", .y: "y.circle",
+        .l: "l.rectangle.roundedbottom", .r: "r.rectangle.roundedbottom",
+        .zl: "zl.rectangle.roundedtop", .zr: "zr.rectangle.roundedtop",
+        .plus: "plus.circle", .minus: "minus.circle",
+        .home: "house.circle", .capture: "square.circle",
+        .stickL: "l.joystick.press.down", .stickR: "r.joystick.press.down",
+        .c: "c.circle", .z: "z.circle",
+        // dpad*, gl, gr, start, sl, sr have no faithful glyph → text fallback.
+    ]
+
     private static let bySuffix: [String: String] = [
         // Xbox / Switch face buttons
         "a": "a.circle", "b": "b.circle", "x": "x.circle", "y": "y.circle",

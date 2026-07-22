@@ -139,7 +139,7 @@ struct ProfileDetailPane: View {
                 activeMappingControlID = control.id
             } label: {
                 HStack(spacing: 4) {
-                    Text(summary(for: control.id))
+                    summaryLabel(for: control.id, control: control)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -209,18 +209,54 @@ struct ProfileDetailPane: View {
         .buttonStyle(MappingRowButtonStyle())
     }
 
-    private func summary(for controlID: String) -> String {
+    // Row summary: single source → glyph + full name (like the output row label);
+    // 2–3 sources → glyphs only, space-separated, in list order; 4+ → a count.
+    private func summaryLabel(for controlID: String, control: OutputControl) -> Text {
         switch draft.mapping[controlID] {
-        case .none: return "Default"
-        case .off: return "Off"
+        case .none:
+            return Text("Default")
+        case .off:
+            return Text("Off")
+        case .sources(let sources) where sources.isEmpty:
+            return Text("Default")
         case .sources(let sources):
-            if sources.isEmpty { return "Default" }
-            if sources.count == 1 { return sources[0].displayName }
-            if sources.count <= 3 {
-                return sources.map { $0.displayName.replacingOccurrences(of: " Button", with: "") }
-                    .joined(separator: " + ")
+            let ordered = orderedSources(sources, for: control)
+            if ordered.count == 1 {
+                return sourceLabel(ordered[0], nameless: false)
             }
-            return "\(sources.count) inputs"
+            if ordered.count <= 3 {
+                return ordered.enumerated().reduce(Text(verbatim: "")) { acc, pair in
+                    let piece = sourceLabel(pair.element, nameless: true)
+                    return pair.offset == 0 ? piece : acc + Text(verbatim: " ") + piece
+                }
+            }
+            return Text("\(ordered.count) inputs")
+        }
+    }
+
+    // One source as Text: glyph (if any) then, when named, its full display name.
+    // Nameless mode shows the glyph alone, falling back to a compact label when
+    // the source has no faithful glyph.
+    private func sourceLabel(_ source: MappingSource, nameless: Bool) -> Text {
+        let glyph = MappingControlSymbols.symbol(forSource: source)
+        if nameless {
+            if let glyph { return Text(Image(systemName: glyph)) }
+            return Text(source.displayName.replacingOccurrences(of: " Button", with: ""))
+        }
+        if let glyph {
+            return Text(Image(systemName: glyph)) + Text(verbatim: " ") + Text(source.displayName)
+        }
+        return Text(source.displayName)
+    }
+
+    // Selected sources sorted into the popover's visual order (family groups in
+    // Family.allCases order, each in availableSources order).
+    private func orderedSources(_ sources: [MappingSource], for control: OutputControl) -> [MappingSource] {
+        let canonical = PhysicalButton.Family.allCases.flatMap { family in
+            availableSources(for: control).filter { $0.family == family }
+        }
+        return sources.sorted {
+            (canonical.firstIndex(of: $0) ?? .max) < (canonical.firstIndex(of: $1) ?? .max)
         }
     }
 
