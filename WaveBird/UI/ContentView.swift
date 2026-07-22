@@ -249,7 +249,7 @@ struct ContentView: View {
                             } : nil,
                             onSelect: { openDetail(for: entry.id) },
                             onDisconnect: { Task { await coordinator.disconnectController(record.id) } },
-                            onForget: entry.serial.map { serial in
+                            onForget: isPairLeft ? nil : entry.serial.map { serial in
                                 {
                                     forgetConfirmation = ForgetConfirmation(
                                         serial: serial,
