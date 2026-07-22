@@ -10,9 +10,13 @@ struct ContentView: View {
     // We auto-dismiss the sheet when a *new* device transitions to .ready, not
     // when one that was already there is re-iterated by SwiftUI.
     @State private var setupSheetBaselineReadyIDs: Set<DeviceID> = []
-    // True only while the Option key is physically held. Pair rows read this
-    // to swap Disconnect → Split.
-    @State private var optionHeld = false
+    @State private var forgetConfirmation: ForgetConfirmation?
+
+    private struct ForgetConfirmation: Identifiable {
+        let serial: String
+        let displayName: String
+        var id: String { serial }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -43,6 +47,19 @@ struct ContentView: View {
         .frame(minWidth: 480, minHeight: 380)
         .sheet(isPresented: $showSetupSheet) {
             SetupSheet { showSetupSheet = false }
+        }
+        .sheet(item: $forgetConfirmation) { confirm in
+            ForgetConfirmationSheet(
+                displayName: confirm.displayName,
+                onForget: {
+                    let serial = confirm.serial
+                    forgetConfirmation = nil
+                    Task { @MainActor in
+                        await coordinator.forgetController(serial: serial)
+                    }
+                },
+                onCancel: { forgetConfirmation = nil }
+            )
         }
         .sheet(isPresented: Binding(
             get: { coordinator.pairingPrompt != nil },
@@ -145,7 +162,6 @@ struct ContentView: View {
                 coordinator.timeoutPairingPrompt()
             }
         }
-        .optionHeld($optionHeld)
     }
 
     // Composite re-key for the partner-sheet timer's .task(id:). DeviceID? +
@@ -223,7 +239,6 @@ struct ContentView: View {
                             isVHIDActive: entry.vhidActive,
                             displayNameOverride: isPairLeft ? coordinator.listDisplayName(for: entry) : nil,
                             vhidActiveOverride: isPairLeft ? coordinator.joyConPairVHIDActive : nil,
-                            optionHeld: optionHeld,
                             onSplit: isPairLeft ? {
                                 Task { await coordinator.splitJoyConPair() }
                                 // The detail window keys off this entry's L serial.
@@ -233,12 +248,26 @@ struct ContentView: View {
                                 dismissWindow(id: "controller-detail")
                             } : nil,
                             onSelect: { openDetail(for: entry.id) },
-                            onDisconnect: { Task { await coordinator.disconnectController(record.id) } }
+                            onDisconnect: { Task { await coordinator.disconnectController(record.id) } },
+                            onForget: {
+                                guard let serial = entry.serial else { return }
+                                forgetConfirmation = ForgetConfirmation(
+                                    serial: serial,
+                                    displayName: coordinator.listDisplayName(for: entry)
+                                )
+                            }
                         )
                     } else if let paired = entry.paired {
-                        OfflineControllerRow(paired: paired) {
-                            openDetail(for: entry.id)
-                        }
+                        OfflineControllerRow(
+                            paired: paired,
+                            onSelect: { openDetail(for: entry.id) },
+                            onForget: {
+                                forgetConfirmation = ForgetConfirmation(
+                                    serial: paired.serial,
+                                    displayName: paired.displayName
+                                )
+                            }
+                        )
                     }
                 }
             }
