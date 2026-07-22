@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarContent: View {
     @Bindable var coordinator: BridgeCoordinator
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -43,6 +44,12 @@ struct MenuBarContent: View {
                         }
                         if let id = entry.live?.id {
                             Divider()
+                            if coordinator.joyConPair?.leftID == id {
+                                Button("Split") {
+                                    Task { await coordinator.splitJoyConPair() }
+                                    dismissWindow(id: "controller-detail")
+                                }
+                            }
                             Button("Disconnect") {
                                 Task { await coordinator.disconnectController(id) }
                             }
