@@ -450,7 +450,19 @@ actor SwitchProSession: HIDOutputSession {
             // shape we present as, and zeroing them would claim the pad sits flat.
             // The trailing 0x0F is the first byte of stick parameters 1 at 0x6086,
             // retained so an over-long read starting here stays contiguous.
-            // CONFIRMED byte-identical to a real Pro Controller dump 2026-08-30.
+            //
+            // VERIFIED AGAINST REAL HARDWARE 2026-08-30, two ways:
+            //  1. Byte-identical to a dump of a genuine Pro Controller
+            //     (Tools/ns1-pro-dump-6000-60AA-2026-08-30.bin).
+            //  2. The values really are the resting gravity vector. Laid flat,
+            //     a real NS1 Pro's raw report 0x30 reads accel (-724, +68,
+            //     +4092) and WaveBird emits (-722, -3, +4116) — both within a
+            //     few percent of the declared (-688, 0, 4038), all three
+            //     tilting ~10 deg about X. So these describe the NS2 shell as
+            //     well as the NS1 one, and need no adjustment for the hardware
+            //     we actually bridge. Reproduce with `NS1Dump.swift imu` and
+            //     `imu virtual`; do NOT compare via GCMotion, which applies its
+            //     own remap and makes the frame look 90 deg wrong.
             let params: [UInt8] = [0x50, 0xFD, 0x00, 0x00, 0xC6, 0x0F, 0x0F]
             for i in 0..<min(length, params.count) { out[out.startIndex + i] = params[i] }
 
