@@ -23,9 +23,22 @@ func profileLabel(_ c: GCController) -> String {
     return "(no recognized profile)"
 }
 
+// GCMotion has no documented HID-descriptor path, so for any presentation that
+// isn't spoofing a controller Apple ships a motion driver for, this is the
+// answer to "did the sensor block do anything".
+func motionLabel(_ c: GCController) -> String {
+    guard let m = c.motion else { return "motion=nil" }
+    var caps: [String] = []
+    if m.hasRotationRate { caps.append("rotationRate") }
+    if m.hasGravityAndUserAcceleration { caps.append("gravity+userAccel") }
+    if m.hasAttitude { caps.append("attitude") }
+    if caps.isEmpty { caps.append("no capabilities") }
+    return "motion=[\(caps.joined(separator: ", "))] sensorsActive=\(m.sensorsActive)"
+}
+
 func describe(_ c: GCController) -> String {
     let vendor = c.vendorName ?? "(no vendor)"
-    return "\(vendor) — category=\"\(c.productCategory)\" — \(profileLabel(c))"
+    return "\(vendor) — category=\"\(c.productCategory)\" — \(profileLabel(c)) — \(motionLabel(c))"
 }
 
 // Compact state line: only the parts that are nonzero / pressed.
@@ -97,7 +110,33 @@ final class StateTracker: @unchecked Sendable {
 
 let tracker = StateTracker()
 
+// GCMotion advertising a capability is not the same as motion data flowing.
+// Sensors on the PlayStation/Switch profiles need explicit activation, so turn
+// them on and sample — a live rotationRate is the only proof motion works.
+func installMotion(on c: GCController) {
+    guard let m = c.motion else { return }
+    let label = (c.vendorName ?? "?").padding(toLength: 28, withPad: " ", startingAt: 0)
+    if m.sensorsRequireManualActivation {
+        m.sensorsActive = true
+        FileHandle.standardError.write(Data("[\(label)] motion: sensors activated (active=\(m.sensorsActive))\n".utf8))
+    }
+    // Poll rather than rely on valueChangedHandler: if the handler never fires
+    // we still learn whether the underlying values are moving, which separates
+    // "GameController isn't delivering motion callbacks" from "the driver isn't
+    // parsing our IMU bytes at all" (values pinned at zero).
+    Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        let r = m.rotationRate
+        let a = m.acceleration
+        let g = m.gravity
+        FileHandle.standardError.write(Data(String(
+            format: "[\(label)] poll rot(%+.3f %+.3f %+.3f) accel(%+.3f %+.3f %+.3f) grav(%+.3f %+.3f %+.3f) active=%@\n",
+            r.x, r.y, r.z, a.x, a.y, a.z, g.x, g.y, g.z,
+            m.sensorsActive ? "Y" : "N").utf8))
+    }
+}
+
 func install(on c: GCController) {
+    installMotion(on: c)
     guard let gp = c.extendedGamepad else {
         FileHandle.standardError.write(Data("[?] \(c.vendorName ?? "?") has no extendedGamepad profile — skipping input handler\n".utf8))
         return
@@ -129,6 +168,10 @@ func install(on c: GCController) {
     // Print an idle baseline so the user knows the handler is wired.
     tracker.emit(c, line: snapshot(gp))
 }
+
+// Unbuffered: this tool is usually run with stdout redirected to a file, and
+// Swift block-buffers to a pipe — which reads as "the probe printed nothing".
+setvbuf(stdout, nil, _IONBF, 0)
 
 print("== GameController.framework probe ==")
 let initial = GCController.controllers()
