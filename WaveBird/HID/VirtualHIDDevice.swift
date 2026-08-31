@@ -104,3 +104,27 @@ extension VirtualHIDDevice {
     }
 
 }
+
+extension VirtualHIDDevice {
+    // gamecontrollerd persists its per-device record keyed on the HID serial
+    // number ALONE — the entries in com.apple.GameController.plist are
+    // identified as `LOGICAL_DEVICE(<serial>)`, with no VID/PID component.
+    // Handing every output mode the same controller serial therefore collides
+    // all of WaveBird's presentations onto one record: publish the Switch Pro
+    // VHID after the DualSense one and the cached record still reads
+    // PRODUCT_CATEGORY_DUALSENSE, so a Nintendo 0x057E/0x2009 device is
+    // classified and drawn as a PlayStation pad. Scoping the serial by output
+    // mode gives each presentation its own record.
+    //
+    // Observed on macOS 27.0 (26A5421a) 2026-08-30: one live "Pro Controller"
+    // VHID, no DualSense HID device on the system, and a plist entry
+    // `LOGICAL_DEVICE(HEW80007222278)` / name "Pro Controller" /
+    // PRODUCT_CATEGORY_DUALSENSE left over from the DualSense mode.
+    //
+    // Nothing reads this value back — it is only ever handed to CoreHID. The
+    // Switch-protocol serial the Pro presentation serves from emulated SPI
+    // flash is a separate value and is not affected.
+    static func hidSerialNumber(deviceSerial: String?, modeID: String) -> String? {
+        deviceSerial.map { "\($0)-\(modeID)" }
+    }
+}

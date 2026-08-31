@@ -154,7 +154,7 @@ extension BridgeCoordinator {
             productName: out.productName,
             manufacturer: out.manufacturer,
             versionNumber: out.versionNumber,
-            serialNumber: record.serial,
+            serialNumber: VirtualHIDDevice.hidSerialNumber(deviceSerial: record.serial, modeID: modeID),
             transport: hidTransport(for: record),
             onSetReport: onSetReport
         ) else { return nil }

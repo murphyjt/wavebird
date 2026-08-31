@@ -211,3 +211,48 @@ struct SwitchProIMUCalibrationTests {
         #expect(abs(936.0 / gyroDenom - 1.0 / 14.2842) < 1e-5)
     }
 }
+
+// gamecontrollerd files its persistent per-device record under
+// `LOGICAL_DEVICE(<hid serial>)` with no VID/PID component, so two output
+// modes sharing a serial share a record — which is how a Switch Pro VHID ends
+// up classified PRODUCT_CATEGORY_DUALSENSE. The only property that matters is
+// that distinct presentations of one controller never collide.
+struct VirtualHIDSerialTests {
+
+    @Test func eachOutputModeGetsADistinctRecordKey() {
+        let serial = "HEW80007222278"
+        let keys = ["switchPro", "dualShock4", "dualSense", "xboxSeries"].map {
+            VirtualHIDDevice.hidSerialNumber(deviceSerial: serial, modeID: $0)
+        }
+        #expect(Set(keys).count == keys.count)
+        #expect(!keys.contains(serial))  // the bare serial must not be reused
+    }
+
+    @Test func theSameControllerAndModeIsStableAcrossRepublishes() {
+        // A republish must land on the SAME record, or per-device settings the
+        // user set in Settings → Game Controllers would reset on every toggle.
+        let a = VirtualHIDDevice.hidSerialNumber(deviceSerial: "HEW8", modeID: "switchPro")
+        let b = VirtualHIDDevice.hidSerialNumber(deviceSerial: "HEW8", modeID: "switchPro")
+        #expect(a == b)
+    }
+
+    @Test func distinctControllersStayDistinctInTheSameMode() {
+        let a = VirtualHIDDevice.hidSerialNumber(deviceSerial: "HBW51034416909", modeID: "xboxSeries")
+        let b = VirtualHIDDevice.hidSerialNumber(deviceSerial: "HHW50000660421", modeID: "xboxSeries")
+        #expect(a != b)
+    }
+
+    @Test func aSeriallessControllerStaysNil() {
+        // CoreHID takes an optional; a controller whose flash read failed has
+        // no serial to scope, and inventing one would be a fabricated identity.
+        #expect(VirtualHIDDevice.hidSerialNumber(deviceSerial: nil, modeID: "switchPro") == nil)
+    }
+
+    @Test func mergedPairKeyDiffersFromEitherSoloSide() {
+        // The pair passes joyConPairSerial() ("L+R"); a solo Joy-Con passes its
+        // own serial. Same mode, different logical device, different record.
+        let pair = VirtualHIDDevice.hidSerialNumber(deviceSerial: "LEFT1+RIGHT2", modeID: "switchPro")
+        let solo = VirtualHIDDevice.hidSerialNumber(deviceSerial: "LEFT1", modeID: "switchPro")
+        #expect(pair != solo)
+    }
+}
