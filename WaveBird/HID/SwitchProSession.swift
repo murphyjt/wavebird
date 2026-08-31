@@ -394,6 +394,7 @@ actor SwitchProSession: HIDOutputSession {
             // shape we present as, and zeroing them would claim the pad sits flat.
             // The trailing 0x0F is the first byte of stick parameters 1 at 0x6086,
             // retained so an over-long read starting here stays contiguous.
+            // CONFIRMED byte-identical to a real Pro Controller dump 2026-08-30.
             let params: [UInt8] = [0x50, 0xFD, 0x00, 0x00, 0xC6, 0x0F, 0x0F]
             for i in 0..<min(length, params.count) { out[out.startIndex + i] = params[i] }
 
@@ -405,15 +406,45 @@ actor SwitchProSession: HIDOutputSession {
             // the doc notes parameters 2 are "normally the same with 1, even in
             // Pro Contr."
             //
-            // 0x6098 previously returned a copy of IMU-shaped bytes (three
-            // offsets then three 0x4000 sensitivities) under the label "factory
-            // IMU horizontal offsets". That was a misread of the SPI map: the
-            // real 6-Axis Horizontal Offsets live at 0x6080 and were already
-            // being served correctly there. Nothing in WaveBird's history
-            // sources those bytes, and the NS2 flash dumps in Tools/ hold
-            // unrelated data at this address, so they were never valid here.
+            // 0x6098 previously returned IMU-shaped bytes (three offsets then
+            // three 0x4000 sensitivity coefficients) under the label "factory
+            // IMU horizontal offsets" — a truncated 6-axis calibration block,
+            // which is the wrong KIND of data for this address. The real 6-Axis
+            // Horizontal Offsets live at 0x6080 and were already correct there.
+            // Those bytes cite no source: not SDL, not dekuNukem, not any dump.
+            //
+            // MEASURED 2026-08-30 — what we actually know about who uses this:
+            //   - SDL never reads it. SDL_hidapi_switch.c defines exactly four
+            //     SPI regions (0x603D, 0x8010, 0x6020, 0x8026) and has no
+            //     dead-zone or stick-parameter handling at all.
+            //   - Apple's driver DOES read 0x6080/0x6086/0x6098 (they are the
+            //     addresses no SDL client requests). What it does with them is
+            //     NOT established. Two fields showed no observable effect on
+            //     stick values sampled through GCController: forcing the range
+            //     ratio to 0x004 (0.1% of full range, which the doc says yields
+            //     "d-pad like movement") left travel smooth across 868 samples,
+            //     and forcing the dead-zone to 0x400 (50% of half-axis) still
+            //     passed 56% of samples below that threshold. That rules out
+            //     those two fields shaping the stick output we can see — it
+            //     does NOT mean the block is ignored. The other ten values were
+            //     never varied, and any use outside the GCController axis path
+            //     would be invisible to that test.
+            // The values that dominate stick behaviour are the factory stick
+            // calibration at 0x603D — look there first. Kept hardware-accurate
+            // here regardless: correct beats plausible, especially for a block
+            // whose consumer we can see reading it but not interpreting it.
+            // Dumped from a real Switch 1 Pro Controller 2026-08-30 with
+            // Tools/NS1Dump.swift (capture: Tools/ns1-pro-dump-6000-60AA-*.bin).
+            // On that hardware 0x6098 is byte-identical to 0x6086, as the doc
+            // says. Decoded: dead-zone 0x096 (7.3% of half-axis), range ratio
+            // 0xF33 (95%). Values 4/5 are 0x4D4/0x541 — asymmetric on genuine
+            // hardware too, so that is not a transcription error.
+            //
+            // Bytes 3-5 previously read 0xAE, 0x90, 0xD9 (dead-zone 0x0AE,
+            // range ratio 0xD99) from no cited source; they are now the
+            // measured values.
             let params: [UInt8] = [
-                0x0F, 0x30, 0x61, 0xAE, 0x90, 0xD9, 0xD4, 0x14, 0x54,
+                0x0F, 0x30, 0x61, 0x96, 0x30, 0xF3, 0xD4, 0x14, 0x54,
                 0x41, 0x15, 0x54, 0xC7, 0x79, 0x9C, 0x33, 0x36, 0x63,
             ]
             for i in 0..<min(length, params.count) { out[out.startIndex + i] = params[i] }
