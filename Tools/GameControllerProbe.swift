@@ -41,25 +41,43 @@ func describe(_ c: GCController) -> String {
     return "\(vendor) — category=\"\(c.productCategory)\" — \(profileLabel(c)) — \(motionLabel(c))"
 }
 
+// GCExtendedGamepad is deliberately abstract: it exposes buttonA/B/X/Y and no
+// Cross/Circle/Square/Triangle, even on GCDualSenseGamepad. The product-specific
+// label is metadata on the element — `localizedName` ("Cross Button", "B
+// Button") — so the same physical press reads differently per presentation.
+//
+// Printing both matters here because WaveBird's presentations remap the
+// abstract inputs: in switchPro mode GameController's abstract A sits at the
+// Nintendo A position, which is geometrically where Circle/B lives on a
+// PlayStation pad. Abstract letters alone can't tell you whether a mapping is
+// right; the pair can.
+func label(_ b: GCControllerButtonInput?, _ abstract: String) -> String {
+    guard let b else { return abstract }
+    guard let name = b.localizedName, !name.isEmpty, name != abstract else { return abstract }
+    return "\(abstract)(\(name))"
+}
+
 // Compact state line: only the parts that are nonzero / pressed.
 func snapshot(_ gp: GCExtendedGamepad) -> String {
     var parts: [String] = []
 
     // Face / system buttons
-    if gp.buttonA.isPressed                  { parts.append("A") }
-    if gp.buttonB.isPressed                  { parts.append("B") }
-    if gp.buttonX.isPressed                  { parts.append("X") }
-    if gp.buttonY.isPressed                  { parts.append("Y") }
-    if gp.leftShoulder.isPressed             { parts.append("LB") }
-    if gp.rightShoulder.isPressed            { parts.append("RB") }
-    if gp.leftThumbstickButton?.isPressed == true  { parts.append("LS·") }
-    if gp.rightThumbstickButton?.isPressed == true { parts.append("RS·") }
-    if gp.buttonOptions?.isPressed == true   { parts.append("Options") }
-    if gp.buttonMenu.isPressed               { parts.append("Menu") }
-    if gp.buttonHome?.isPressed == true      { parts.append("Home") }
+    if gp.buttonA.isPressed                  { parts.append(label(gp.buttonA, "A")) }
+    if gp.buttonB.isPressed                  { parts.append(label(gp.buttonB, "B")) }
+    if gp.buttonX.isPressed                  { parts.append(label(gp.buttonX, "X")) }
+    if gp.buttonY.isPressed                  { parts.append(label(gp.buttonY, "Y")) }
+    if gp.leftShoulder.isPressed             { parts.append(label(gp.leftShoulder, "LB")) }
+    if gp.rightShoulder.isPressed            { parts.append(label(gp.rightShoulder, "RB")) }
+    if gp.leftThumbstickButton?.isPressed == true  { parts.append(label(gp.leftThumbstickButton, "LS·")) }
+    if gp.rightThumbstickButton?.isPressed == true { parts.append(label(gp.rightThumbstickButton, "RS·")) }
+    if gp.buttonOptions?.isPressed == true   { parts.append(label(gp.buttonOptions, "Options")) }
+    if gp.buttonMenu.isPressed               { parts.append(label(gp.buttonMenu, "Menu")) }
+    if gp.buttonHome?.isPressed == true      { parts.append(label(gp.buttonHome, "Home")) }
     // Share/Capture lives on the controller-specific subclasses, not the base
     // GCExtendedGamepad: Xbox exposes buttonShare, DualShock/DualSense buttonTouchpad.
-    if let xbox = gp as? GCXboxGamepad, xbox.buttonShare?.isPressed == true { parts.append("Share") }
+    if let xbox = gp as? GCXboxGamepad, xbox.buttonShare?.isPressed == true {
+        parts.append(label(xbox.buttonShare, "Share"))
+    }
 
     // D-pad
     if gp.dpad.up.isPressed    { parts.append("↑") }
@@ -159,10 +177,21 @@ func install(on c: GCController) {
     // Catch-all: the physical input profile carries every element, including
     // system buttons the extendedGamepad profile omits. If even this stays
     // silent on Home/Share, macOS isn't delivering them to the app at all.
+    //
+    // Filtered to elements extendedGamepad does NOT cover — snapshot() already
+    // prints those with their localizedName, so an unfiltered catch-all doubles
+    // every press. What survives is the interesting part: system buttons, and
+    // inputs the two layers model differently (ZL/ZR are analog triggers to
+    // extendedGamepad but named buttons here). Matched by identity and by name,
+    // since the two profiles need not vend the same element instances.
+    let coveredIDs = Set(gp.allButtons.map(ObjectIdentifier.init))
+    let coveredNames = Set(gp.allButtons.compactMap(\.localizedName))
     c.physicalInputProfile.valueDidChangeHandler = { _, element in
         guard let button = element as? GCControllerButtonInput, button.isPressed,
-              let name = element.localizedName ?? element.sfSymbolsName else { return }
-        FileHandle.standardError.write(Data("[\(label)] profile: \(name)\n".utf8))
+              !coveredIDs.contains(ObjectIdentifier(button)),
+              let name = element.localizedName ?? element.sfSymbolsName,
+              !coveredNames.contains(name) else { return }
+        FileHandle.standardError.write(Data("[\(label)] profile-only: \(name)\n".utf8))
     }
 
     // Print an idle baseline so the user knows the handler is wired.
