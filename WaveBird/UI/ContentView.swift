@@ -18,7 +18,84 @@ struct ContentView: View {
         var id: String { serial }
     }
 
+    // Split into `presentation` plus the reaction chain below: as one
+    // expression this exceeded the Swift type-checker's time limit on a clean
+    // Release build. It type-checked fine incrementally, so it only ever
+    // failed in CI. Keep them separate.
     var body: some View {
+        presentation
+        .onChange(of: showSetupSheet) { _, isOpen in
+            if isOpen {
+                setupSheetBaselineReadyIDs = Set(coordinator.devices.compactMap {
+                    $0.value.connectionState == .ready ? $0.key : nil
+                })
+            } else {
+                setupSheetBaselineReadyIDs = []
+            }
+        }
+        .onChange(of: currentReadyIDs) { _, nowReady in
+            // A device readied while the setup sheet is open — handoff.
+            guard showSetupSheet else { return }
+            if !nowReady.subtracting(setupSheetBaselineReadyIDs).isEmpty {
+                showSetupSheet = false
+            }
+        }
+        // Bring the app forward when a profile picker needs answering. The
+        // LTK-pair sheet never triggers foregrounding under profile-first
+        // ordering: it always fires after a VHID is built, so the user has
+        // either just engaged with the picker or the controller is known
+        // (and we want the sheet to sit quietly in the background).
+        // ignoringOtherApps: true is required — macOS 14+'s parameterless
+        // activate() is treated as a "cooperative" request that won't
+        // override the frontmost app for a background-triggered event like
+        // a controller connecting. We also openWindow("main") so the sheet
+        // has a host if the user previously closed the window.
+        .onChange(of: coordinator.awaitingProfileSelectionID) { _, newID in
+            guard newID != nil else { return }
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        // Accessory mode (Hide dock icon) suppresses the Window scene's
+        // ability to host a sheet — the prompt would sit invisibly and
+        // time out. Flip back to .regular while any prompt is up, then
+        // restore the user's preference when everything closes.
+        .onChange(of: coordinator.hasActivePrompt) { _, hasPrompt in
+            if hasPrompt {
+                NSApp.setActivationPolicy(.regular)
+                openWindow(id: "main")
+            } else {
+                let hideDock = UserDefaults.standard.bool(forKey: "WaveBird.hideDockIcon")
+                NSApp.setActivationPolicy(hideDock ? .accessory : .regular)
+            }
+        }
+        // 10 s timer for the Joy-Con partner sheet. The key string re-keys
+        // when either the waiting Joy-Con or the covering LTK sheet changes,
+        // so the timer only counts down once the partner sheet is actually
+        // on screen.
+        .task(id: partnerSheetTimerKey) {
+            guard coordinator.joyConWaitingForPartnerID != nil,
+                  coordinator.pairingPrompt == nil else { return }
+            try? await Task.sleep(for: .seconds(10))
+            if Task.isCancelled { return }
+            if coordinator.joyConWaitingForPartnerID != nil,
+               coordinator.pairingPrompt == nil {
+                coordinator.acknowledgeJoyConWaitingForPartner()
+            }
+        }
+        // 30 s timer for the LTK-pair sheet. Times out without recording a
+        // decline so the controller's next .ready can re-prompt.
+        .task(id: coordinator.pairingPrompt?.deviceID) {
+            guard coordinator.pairingPrompt != nil else { return }
+            try? await Task.sleep(for: .seconds(30))
+            if Task.isCancelled { return }
+            if coordinator.pairingPrompt != nil {
+                coordinator.timeoutPairingPrompt()
+            }
+        }
+    }
+
+    // The view proper: content plus the sheets and alerts it presents.
+    private var presentation: some View {
         VStack(spacing: 8) {
             if let reason = coordinator.transportUnavailableReason {
                 transportBanner(reason)
@@ -107,74 +184,6 @@ struct ContentView: View {
                 } ?? .left
             ) {
                 coordinator.acknowledgeJoyConWaitingForPartner()
-            }
-        }
-        .onChange(of: showSetupSheet) { _, isOpen in
-            if isOpen {
-                setupSheetBaselineReadyIDs = Set(coordinator.devices.compactMap {
-                    $0.value.connectionState == .ready ? $0.key : nil
-                })
-            } else {
-                setupSheetBaselineReadyIDs = []
-            }
-        }
-        .onChange(of: currentReadyIDs) { _, nowReady in
-            // A device readied while the setup sheet is open — handoff.
-            guard showSetupSheet else { return }
-            if !nowReady.subtracting(setupSheetBaselineReadyIDs).isEmpty {
-                showSetupSheet = false
-            }
-        }
-        // Bring the app forward when a profile picker needs answering. The
-        // LTK-pair sheet never triggers foregrounding under profile-first
-        // ordering: it always fires after a VHID is built, so the user has
-        // either just engaged with the picker or the controller is known
-        // (and we want the sheet to sit quietly in the background).
-        // ignoringOtherApps: true is required — macOS 14+'s parameterless
-        // activate() is treated as a "cooperative" request that won't
-        // override the frontmost app for a background-triggered event like
-        // a controller connecting. We also openWindow("main") so the sheet
-        // has a host if the user previously closed the window.
-        .onChange(of: coordinator.awaitingProfileSelectionID) { _, newID in
-            guard newID != nil else { return }
-            openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        // Accessory mode (Hide dock icon) suppresses the Window scene's
-        // ability to host a sheet — the prompt would sit invisibly and
-        // time out. Flip back to .regular while any prompt is up, then
-        // restore the user's preference when everything closes.
-        .onChange(of: coordinator.hasActivePrompt) { _, hasPrompt in
-            if hasPrompt {
-                NSApp.setActivationPolicy(.regular)
-                openWindow(id: "main")
-            } else {
-                let hideDock = UserDefaults.standard.bool(forKey: "WaveBird.hideDockIcon")
-                NSApp.setActivationPolicy(hideDock ? .accessory : .regular)
-            }
-        }
-        // 10 s timer for the Joy-Con partner sheet. The key string re-keys
-        // when either the waiting Joy-Con or the covering LTK sheet changes,
-        // so the timer only counts down once the partner sheet is actually
-        // on screen.
-        .task(id: partnerSheetTimerKey) {
-            guard coordinator.joyConWaitingForPartnerID != nil,
-                  coordinator.pairingPrompt == nil else { return }
-            try? await Task.sleep(for: .seconds(10))
-            if Task.isCancelled { return }
-            if coordinator.joyConWaitingForPartnerID != nil,
-               coordinator.pairingPrompt == nil {
-                coordinator.acknowledgeJoyConWaitingForPartner()
-            }
-        }
-        // 30 s timer for the LTK-pair sheet. Times out without recording a
-        // decline so the controller's next .ready can re-prompt.
-        .task(id: coordinator.pairingPrompt?.deviceID) {
-            guard coordinator.pairingPrompt != nil else { return }
-            try? await Task.sleep(for: .seconds(30))
-            if Task.isCancelled { return }
-            if coordinator.pairingPrompt != nil {
-                coordinator.timeoutPairingPrompt()
             }
         }
     }
