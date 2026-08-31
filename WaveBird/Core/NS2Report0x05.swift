@@ -35,6 +35,56 @@ enum NS2Report0x05 {
         )
     }
 
+    // Motion data: 18 bytes at offset 0x2A — 4B timestamp, 2B temperature,
+    // then six Int16 LE (accelX, accelY, accelZ, gyroX, gyroY, gyroZ).
+    //
+    // Linear-axis swap (accel + gyro X/Y) follows the -90° about Z geometry
+    // derived from SDL's switch.c and switch2.c remaps:
+    //   NS1.X = +NS2.Y    NS1.Y = -NS2.X    NS1.Z = +NS2.Z
+    //
+    // Gyro and accel MUST use this same rotation. GCMotion's gravity and
+    // attitude are sensor-fusion output: the filter integrates gyro and
+    // corrects the drift against the accelerometer. Negating a single gyro
+    // axis flips the transform's determinant to -1, making the gyro frame a
+    // mirror of the accel frame — the two then disagree about that axis and
+    // the fused attitude oscillates. Observed 2026-08-30 as roll visibly
+    // bouncing in a first-person game while pitch and yaw looked correct.
+    // Any future axis correction has to move BOTH gyro and accel to another
+    // proper rotation; never negate one gyro axis alone.
+    //
+    // Axis semantics, from SDL_hidapi_switch.c's sensor remap (SDL X/pitch =
+    // -rawY, Y/yaw = +rawZ, Z/roll = -rawX): in the NS1 frame emitted here
+    // gyroX is roll, gyroY is pitch, gyroZ is yaw.
+    //
+    // Gyro Z (yaw) previously carried an extra negation, on the reasoning that
+    // Apple's NS1 driver inverts yaw. That was measured 2026-05-17, one day
+    // after the bad factory IMU calibration blob landed (see SwitchProSession
+    // 0x6020) and while gyro Z's SDL-reading scale denominator was negative —
+    // i.e. against an already-inverted axis. Zeroing the origins removed the
+    // inversion and left the compensation stranded, which is why yaw read
+    // backwards until it was dropped.
+    //
+    // Accel scale matches NS1 (~4096 LSB/g); gyro scale is within ~15% of
+    // NS1's ~40 rad/s full range so we pass through unscaled. Returns nil
+    // when the slot is all zeros — IMU disabled or feature bit not yet
+    // enabled.
+    //
+    // AXIS MAPPING VERIFIED ON HARDWARE 2026-08-31. Measured with
+    // Tools/NS1Dump.swift (`imu` against a real NS1 Pro, `imu virtual` against
+    // what we emit), gravity in raw report-0x30 counts, ~4096 = 1g:
+    //
+    //   orientation      real NS1 Pro         NS2 Pro (ours)      GameCube (ours)
+    //   flat, face up    (-724, +68, +4092)   (-722,  -3, +4116)  (-123, +14, +4133)
+    //   left edge down   ( +11, -4033, +423)  (+136, -4076, +376) (+280, -4100, -78)
+    //   nose down        (-4048, +152, -404)  (X pinned by flat)  (-4100, +92, -194)
+    //
+    // Same axis, same sign, ~1g in every case, across two different shells.
+    // The differing flat X term is resting tilt, not axes: a Pro sits ~10 deg
+    // off vertical, a GameCube ~1.7 deg.
+    //
+    // Measure this at the WIRE level only. GCMotion applies its own
+    // undocumented remap, and comparing its output against raw values made a
+    // correct frame look 90 deg wrong for most of a debugging session.
     static func parseIMU(_ slice: Data) -> IMUSample? {
         let i = slice.startIndex + 6
         guard slice.endIndex - i >= 12 else { return nil }
