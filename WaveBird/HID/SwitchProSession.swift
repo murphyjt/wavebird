@@ -202,7 +202,12 @@ actor SwitchProSession: HIDOutputSession {
             payload[8] = 0x34
             payload[9] = 0x56
             payload[10] = 0x01         // unknown / filler
-            payload[11] = 0x02         // color location: use default colors
+            // Color source: 0x01 = read from SPI, 0x02 = use host defaults. A
+            // real Pro Controller reports 0x01 (verified on hardware
+            // 2026-08-30), and the color block we serve at 0x6050 is
+            // byte-identical to that controller's — so claiming "defaults" told
+            // the host to ignore correct data.
+            payload[11] = 0x01
 
         case 0x03:  // Set input report mode
             if let mode = args.first.flatMap({ InputMode(rawValue: $0) }) {

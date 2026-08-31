@@ -34,6 +34,8 @@ let kMaxRead = 0x1D    // per-subcommand cap
 // MARK: - CLI
 
 var args = CommandLine.arguments.dropFirst()
+let infoMode = (args.first == "info")
+if infoMode { args = args.dropFirst() }
 func parseAddr(_ s: String) -> UInt32? {
     s.hasPrefix("0x") || s.hasPrefix("0X")
         ? UInt32(s.dropFirst(2), radix: 16)
@@ -57,7 +59,8 @@ guard endAddr > startAddr else {
 // everything runs on the main run loop, one outstanding request at a time.
 
 final class Pending: @unchecked Sendable {
-    var wantAddr: UInt32?
+    var wantSubcmd: UInt8 = 0x10
+    var wantAddr: UInt32?      // nil = match on subcommand alone
     var data: [UInt8]?
 }
 let pending = Pending()
@@ -69,12 +72,16 @@ let inputCallback: IOHIDReportCallback = { _, _, _, _, reportID, report, length 
     // Bluetooth frames carry the ID in byte 0; USB-style stacks strip it into
     // reportID. Accept either shape.
     let f: [UInt8] = (b[0] == 0x21) ? Array(b) : ([UInt8(reportID)] + Array(b))
-    guard f.count >= 20, f[0] == 0x21, f[14] == 0x10 else { return }
-    let echoed = UInt32(f[15]) | UInt32(f[16]) << 8 | UInt32(f[17]) << 16 | UInt32(f[18]) << 24
-    guard let want = pending.wantAddr, echoed == want else { return }   // ignore the driver's frames
-    let n = Int(f[19])
-    guard f.count >= 20 + n else { return }
-    pending.data = Array(f[20..<(20 + n)])
+    guard f.count >= 20, f[0] == 0x21, f[14] == pending.wantSubcmd else { return }
+    if let want = pending.wantAddr {
+        let echoed = UInt32(f[15]) | UInt32(f[16]) << 8 | UInt32(f[17]) << 16 | UInt32(f[18]) << 24
+        guard echoed == want else { return }        // ignore the OS driver's interleaved frames
+        let n = Int(f[19])
+        guard f.count >= 20 + n else { return }
+        pending.data = Array(f[20..<(20 + n)])
+    } else {
+        pending.data = Array(f[15...])              // subcommand payload starts at 15
+    }
 }
 
 // MARK: - Device
@@ -142,6 +149,41 @@ func readChunk(addr: UInt32, len: Int) -> [UInt8]? {
         CFRunLoopRunInMode(.defaultMode, 0.01, true)
     }
     return pending.data
+}
+
+// MARK: - Device info (subcommand 0x02)
+
+if infoMode {
+    pending.wantSubcmd = 0x02
+    pending.wantAddr = nil
+    pending.data = nil
+    var pkt: [UInt8] = [0x01, 0x00,
+                        0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40,
+                        0x02]
+    let rc = IOHIDDeviceSetReport(dev, kIOHIDReportTypeOutput, 0x01, &pkt, pkt.count)
+    guard rc == kIOReturnSuccess else {
+        FileHandle.standardError.write(Data(String(format: "SetReport failed rc=0x%08X\n", rc).utf8))
+        exit(1)
+    }
+    let deadline = Date().addingTimeInterval(2.0)
+    while pending.data == nil && Date() < deadline {
+        CFRunLoopRunInMode(.defaultMode, 0.01, true)
+    }
+    guard let p = pending.data, p.count >= 12 else {
+        FileHandle.standardError.write(Data("no device-info reply\n".utf8))
+        exit(1)
+    }
+    let types = [0x01: "Left Joy-Con", 0x02: "Right Joy-Con", 0x03: "Pro Controller"]
+    print("device info (subcommand 0x02):")
+    print(String(format: "  firmware        %d.%d  (0x%02X 0x%02X)", p[0], p[1], p[0], p[1]))
+    print(String(format: "  controller type 0x%02X  %@", p[2], types[Int(p[2])] ?? "unknown"))
+    print(String(format: "  byte[3]         0x%02X  (doc: unknown, always 0x02)", p[3]))
+    print("  MAC (big-endian) " + p[4...9].map { String(format: "%02X", $0) }.joined(separator: ":"))
+    print(String(format: "  byte[10]        0x%02X  (doc: unknown, always 0x01)", p[10]))
+    print(String(format: "  byte[11]        0x%02X  (colors: 0x01 = read from SPI, 0x02 = default)", p[11]))
+    print("  raw " + p.prefix(12).map { String(format: "%02X", $0) }.joined(separator: " "))
+    IOHIDDeviceClose(dev, IOOptionBits(kIOHIDOptionsTypeNone))
+    exit(0)
 }
 
 FileHandle.standardError.write(Data(String(format: "Reading 0x%04X..0x%04X from a real Pro Controller\n\n", startAddr, endAddr).utf8))
