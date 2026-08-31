@@ -347,12 +347,26 @@ actor SwitchProSession: HIDOutputSession {
             // TODO: Log?
             break
         case 0x6020:
-            // Factory IMU calibration — accel offsets + gains, gyro offsets + gains.
+            // Factory IMU calibration: per-axis origin then sensitivity coefficient,
+            // accel first, all Int16 LE (SDL SDL_hidapi_switch.c::LoadIMUCalibration,
+            // k_unSPIIMUScaleStartOffset 0x6020).
+            //
+            // The origins are ZERO on purpose. On a real controller they record that
+            // unit's own deviation, and the host removes it — SDL folds them into the
+            // scale denominator (SWITCH_*_SCALE_MULT / (sensCoeff - raw)), while
+            // dekuNukem documents them as the "origin position when still", i.e. an
+            // offset the host subtracts. Apple's driver behaves like the latter.
+            // WaveBird is synthetic and forwards NS2 samples that already sit near
+            // zero at rest, so it has no deviation to declare, and zero is right under
+            // either reading: subtract nothing, or divide by the bare sensitivity
+            //
+            // With zero origins the scale reduces exactly to SDL's no-calibration
+            // defaults: accel 4.0/0x4000 * G == G/4096, gyro 936/0x343B == 1/14.2842.
             let cal: [UInt8] = [
-                0xBA, 0x15, 0x62, 0x11, 0x09, 0x10,   // accel offsets
-                0x00, 0x40, 0x00, 0x40, 0x00, 0x40,   // accel sensitivity
-                0xC7, 0x79, 0x9C, 0xFF, 0xC7, 0x7F,   // gyro offsets
-                0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34,   // gyro sensitivity
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // accel origin XYZ (none to declare)
+                0x00, 0x40, 0x00, 0x40, 0x00, 0x40,   // accel sensitivity 0x4000
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // gyro origin XYZ (none to declare)
+                0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34,   // gyro sensitivity 0x343B
             ]
             for i in 0..<min(length, cal.count) { out[out.startIndex + i] = cal[i] }
 

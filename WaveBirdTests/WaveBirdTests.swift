@@ -156,3 +156,58 @@ struct NS2PairingVectorTests {
         #expect(frame == expected)
     }
 }
+
+// The emulated SPI flash is what Apple's Switch Pro driver reads to decide how
+// to scale our IMU samples. Getting 0x6020 wrong doesn't fail to build, doesn't
+// fail to connect, and doesn't stop motion appearing — it just makes every
+// motion value quietly wrong, which is why it's pinned here.
+struct SwitchProIMUCalibrationTests {
+
+    private var factoryIMUCal: [UInt8] {
+        [UInt8](SwitchProSession.spiFlash(address: 0x6020, length: 24))
+    }
+
+    private func int16LE(_ b: [UInt8], _ i: Int) -> Int16 {
+        Int16(bitPattern: UInt16(b[i]) | UInt16(b[i + 1]) << 8)
+    }
+
+    @Test func originsAreZeroSoTheHostAppliesNominalScale() {
+        let cal = factoryIMUCal
+        // Accel origin XYZ at 0..5, gyro origin XYZ at 12..17.
+        for i in stride(from: 0, to: 6, by: 2) {
+            #expect(int16LE(cal, i) == 0, "accel origin at \(i) must stay zero")
+        }
+        for i in stride(from: 12, to: 18, by: 2) {
+            #expect(int16LE(cal, i) == 0, "gyro origin at \(i) must stay zero")
+        }
+    }
+
+    @Test func sensitivityCoefficientsAreNintendoNominal() {
+        let cal = factoryIMUCal
+        for i in stride(from: 6, to: 12, by: 2) {
+            #expect(int16LE(cal, i) == 0x4000)  // accel
+        }
+        for i in stride(from: 18, to: 24, by: 2) {
+            #expect(int16LE(cal, i) == 0x343B)  // gyro
+        }
+    }
+
+    // Reproduces SDL's LoadIMUCalibration arithmetic (SDL_hidapi_switch.c) and
+    // checks it lands on SDL's own no-calibration defaults. A negative
+    // denominator here is the specific bug this replaced: it flips the axis and
+    // rescales it, which reads as a large constant drift at rest.
+    @Test func derivedScalesMatchSDLDefaults() {
+        let cal = factoryIMUCal
+        let accelDenom = Float(int16LE(cal, 6)) - Float(int16LE(cal, 0))
+        let gyroDenom  = Float(int16LE(cal, 18)) - Float(int16LE(cal, 12))
+        #expect(accelDenom > 0)
+        #expect(gyroDenom > 0)
+
+        // SWITCH_ACCEL_SCALE_MULT 4.0 / denom  ==  1 / SWITCH_ACCEL_SCALE 4096
+        #expect(abs(4.0 / accelDenom - 1.0 / 4096.0) < 1e-9)
+        // SWITCH_GYRO_SCALE_MULT 936.0 / denom  ==  1 / SWITCH_GYRO_SCALE 14.2842.
+        // SDL rounds those two constants independently, so they agree to ~0.007%
+        // rather than exactly; the tolerance is sized to that, not to float error.
+        #expect(abs(936.0 / gyroDenom - 1.0 / 14.2842) < 1e-5)
+    }
+}
