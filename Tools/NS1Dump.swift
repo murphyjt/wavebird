@@ -34,18 +34,23 @@ let kMaxRead = 0x1D    // per-subcommand cap
 // MARK: - CLI
 
 var args = CommandLine.arguments.dropFirst()
-let infoMode = (args.first == "info")
-if infoMode { args = args.dropFirst() }
-// `imu` mode: listen to input report 0x30 and decode the raw IMU frame. This is
-// the SENSOR frame the factory calibration is expressed in — unlike GCMotion,
-// which applies an undocumented remap of its own.
-let imuMode = (args.first == "imu")
-if imuMode { args = args.dropFirst() }
+// Flags may appear in any order before the address arguments.
+var flags: Set<String> = []
+while let f = args.first, ["info", "imu", "virtual", "raw"].contains(f) {
+    flags.insert(f)
+    args = args.dropFirst()
+}
+let infoMode = flags.contains("info")
+let imuMode = flags.contains("imu")
 // Normally the virtual device is rejected (see below). `virtual` deliberately
 // targets it instead — the only way to compare what WaveBird emits against real
 // hardware in the same sensor frame.
-let wantVirtual = (args.first == "virtual")
-if wantVirtual { args = args.dropFirst() }
+let wantVirtual = flags.contains("virtual")
+// `raw` mode: hexdump input reports as they arrive, whatever their ID. Answers
+// "are we even putting these bytes on the wire" independently of what any
+// driver does with them.
+let rawMode = flags.contains("raw")
+
 func parseAddr(_ s: String) -> UInt32? {
     s.hasPrefix("0x") || s.hasPrefix("0X")
         ? UInt32(s.dropFirst(2), radix: 16)
@@ -76,6 +81,11 @@ final class Pending: @unchecked Sendable {
 let pending = Pending()
 var reportBuffer = [UInt8](repeating: 0, count: 64)
 
+final class RawBox: @unchecked Sendable {
+    var frames: [[UInt8]] = []
+}
+let rawBox = RawBox()
+
 final class IMUBox: @unchecked Sendable {
     var samples: [[Int]] = []       // accelX,Y,Z, gyroX,Y,Z per frame
 }
@@ -87,6 +97,10 @@ let inputCallback: IOHIDReportCallback = { _, _, _, _, reportID, report, length 
     // Full-mode input report: 3 IMU frames of 12 bytes from offset 13, each six
     // Int16 LE (accel XYZ then gyro XYZ). Apple's driver has already put the
     // controller into 0x30 mode, so these arrive without us asking.
+    if rawMode {
+        rawBox.frames.append(([UInt8(reportID)] + Array(b.prefix(31))))
+        return
+    }
     if imuMode {
         let f: [UInt8] = (b[0] == 0x30) ? Array(b) : ([UInt8(reportID)] + Array(b))
         guard f.count >= 25, f[0] == 0x30 else { return }
@@ -112,10 +126,17 @@ let inputCallback: IOHIDReportCallback = { _, _, _, _, reportID, report, length 
 // MARK: - Device
 
 let mgr = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-IOHIDManagerSetDeviceMatching(mgr, [
-    kIOHIDVendorIDKey as String: kVID,
-    kIOHIDProductIDKey as String: kPID,
-] as CFDictionary)
+// When targeting our own virtual device we cannot match on Switch Pro's
+// VID/PID: WaveBird presents different identities per output mode (DualSense is
+// 054C/0CE6). Match everything and filter by transport instead.
+if wantVirtual {
+    IOHIDManagerSetDeviceMatching(mgr, nil)
+} else {
+    IOHIDManagerSetDeviceMatching(mgr, [
+        kIOHIDVendorIDKey as String: kVID,
+        kIOHIDProductIDKey as String: kPID,
+    ] as CFDictionary)
+}
 IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
 
 // CRITICAL: WaveBird's own virtual Switch Pro presentation uses the SAME
@@ -129,7 +150,7 @@ let candidates = (IOHIDManagerCopyDevices(mgr) as? Set<IOHIDDevice>) ?? []
 let real = candidates.filter {
     let isVirtual = (str($0, kIOHIDTransportKey) ?? "").lowercased() == "virtual"
     return wantVirtual ? isVirtual : !isVirtual
-}
+}.sorted { (str($0, kIOHIDProductKey) ?? "") < (str($1, kIOHIDProductKey) ?? "") }
 if !wantVirtual {
     for d in candidates where !real.contains(d) {
         FileHandle.standardError.write(Data(
@@ -144,8 +165,10 @@ guard let dev = real.first else {
         """.utf8))
     exit(1)
 }
-FileHandle.standardError.write(Data(
-    "using: transport=\(str(dev, kIOHIDTransportKey) ?? "?") serial=\(str(dev, kIOHIDSerialNumberKey) ?? "?")\n".utf8))
+let usingMsg = "using: \(str(dev, kIOHIDProductKey) ?? "?") "
+    + "transport=\(str(dev, kIOHIDTransportKey) ?? "?") "
+    + "serial=\(str(dev, kIOHIDSerialNumberKey) ?? "?")\n"
+FileHandle.standardError.write(Data(usingMsg.utf8))
 if IOHIDDeviceOpen(dev, IOOptionBits(kIOHIDOptionsTypeNone)) != kIOReturnSuccess {
     FileHandle.standardError.write(Data("IOHIDDeviceOpen failed — another process may hold it exclusively.\n".utf8))
     exit(1)
@@ -179,6 +202,32 @@ func readChunk(addr: UInt32, len: Int) -> [UInt8]? {
         CFRunLoopRunInMode(.defaultMode, 0.01, true)
     }
     return pending.data
+}
+
+// MARK: - Raw input report dump
+
+if rawMode {
+    FileHandle.standardError.write(Data("Dumping input reports for 8s — move the controller...\n".utf8))
+    let deadline = Date().addingTimeInterval(8)
+    while Date() < deadline { CFRunLoopRunInMode(.defaultMode, 0.05, true) }
+    let frames = rawBox.frames
+    guard !frames.isEmpty else {
+        FileHandle.standardError.write(Data("no input reports received\n".utf8))
+        exit(1)
+    }
+    print("\(frames.count) reports; showing 4 spread across the capture")
+    for i in stride(from: 0, to: frames.count, by: max(1, frames.count / 4)).prefix(4) {
+        let f = frames[i]
+        print("  " + f.enumerated().map { String(format: "%02X", $1) }.joined(separator: " "))
+    }
+    // Which byte positions ever change? Static bytes are almost certainly
+    // unfilled; varying ones are live data.
+    let width = frames.map(\.count).min() ?? 0
+    var varying: [Int] = []
+    for i in 0..<width where Set(frames.map { $0[i] }).count > 1 { varying.append(i) }
+    print("\n  byte indices that VARY across the capture: \(varying)")
+    IOHIDDeviceClose(dev, IOOptionBits(kIOHIDOptionsTypeNone))
+    exit(0)
 }
 
 // MARK: - Raw IMU sampling (input report 0x30)
