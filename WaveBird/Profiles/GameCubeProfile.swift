@@ -131,12 +131,23 @@ struct GameCubeProfile: ControllerProfile {
             // samples, ~4096/g at rest, gyro swinging to +/-3000 when rotated.
             // It was previously requested via the feature mask and discarded.
             //
-            // UNVERIFIED: the axis remap. NS2Report0x05.parseIMU applies the
-            // -90-about-Z geometry derived for the Pro Controller, whose shell
-            // holds its sensor board differently. Same-frame comparison against
-            // a real NS1 Pro is the way to check it (Tools/NS1Dump.swift imu
-            // virtual); do NOT judge it through GCMotion, which applies its own
-            // remap.
+            // The axis remap is VERIFIED for this shell too, 2026-08-31. The
+            // shared parseIMU applies geometry derived for the Pro Controller,
+            // so it was checked against a real NS1 Pro in three orientations
+            // (Tools/NS1Dump.swift `imu virtual` here, `imu` there) — gravity
+            // lands on the same axis with the same sign in each:
+            //             GameCube              real NS1 Pro
+            //   flat      (-123, +14, +4133)    (-724, +68, +4092)
+            //   left edge (+280, -4100,  -78)   ( +11, -4033, +423)
+            //   nose down (-4100, +92, -194)    (-4048, +152, -404)
+            // Judge this at the wire level only; GCMotion applies its own
+            // undocumented remap and makes a correct frame look rotated.
+            //
+            // The flat X term differs (-123 vs -724) because the GC shell rests
+            // ~1.7 deg off vertical where a Pro rests ~10 deg. That also means
+            // the 6-Axis Horizontal Offsets we serve at SPI 0x6080 are the Pro
+            // Controller's and are wrong for this shell by ~8 deg — harmless
+            // only for as long as nothing is shown to consume that block.
             imu: NS2Report0x05.parseIMU(d.imuSlice),
             timestamp: .now,
             shoulders: shoulders
