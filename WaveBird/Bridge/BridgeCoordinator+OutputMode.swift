@@ -142,7 +142,7 @@ extension BridgeCoordinator {
 
     func makeVirtualHID(for record: DeviceRecord, modeID: String) -> (VirtualHIDDevice, any HIDOutputSession)? {
         let out = output(for: record, modeID: modeID)
-        let session = out.makeSession()
+        let session = out.makeSession(deviceSerial: record.serial)
         let rumbleBox = RumbleRefreshBox()
         rumbleRefreshBoxes[record.id] = rumbleBox
         let settings = rumbleSettings(for: record)

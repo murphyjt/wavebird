@@ -226,11 +226,11 @@ extension BridgeCoordinator {
         }
 
         let outProfile = catalog.resolved(id: modeID).makeProfile(joyConPairProfile)
-        let session = outProfile.makeSession()
         // "Lserial+Rserial" (joyConPairSerial), not one side's serial: a merged
         // pair and a solo left Joy-Con are different logical devices, and
         // gamecontrollerd would otherwise file them under the same record.
         let serial = joyConPairSerial() ?? left.serial ?? right.serial
+        let session = outProfile.makeSession(deviceSerial: serial)
 
         // Both Joy-Con encoders read tuning from the same paired-profile
         // RumbleSettings — the merged detail-card binding writes once and

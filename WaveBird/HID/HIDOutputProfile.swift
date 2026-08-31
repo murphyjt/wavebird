@@ -92,7 +92,12 @@ protocol HIDOutputProfile: Sendable {
     // Construct the per-virtual-device session. Stateless outputs typically
     // return `self` (dual-conforming to both protocols); stateful presentations return
     // a fresh actor instance so handshake state is scoped to one connection.
-    func makeSession() -> any HIDOutputSession
+    //
+    // `deviceSerial` is the NS2 serial of the controller this session serves, or
+    // nil if the flash read failed. Only presentations that must expose a
+    // per-device identity use it (the Switch Pro spoof derives its reported
+    // Bluetooth address from it); everything else ignores it.
+    func makeSession(deviceSerial: String?) -> any HIDOutputSession
 }
 
 extension HIDOutputProfile {
@@ -171,7 +176,7 @@ struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
     // the shared 0x05, so it needs that secondary channel subscribed.
     var requiredSecondaryReportIDs: Set<UInt8> { [0x09] }
 
-    func makeSession() -> any HIDOutputSession { self }
+    func makeSession(deviceSerial: String?) -> any HIDOutputSession { self }
 
     // The state-translation pipeline is short-circuited by transformRawReport,
     // so buildReport never produces a useful frame in passthrough mode.

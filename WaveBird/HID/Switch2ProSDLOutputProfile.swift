@@ -23,7 +23,7 @@ final class Switch2ProSDLOutput: HIDOutputProfile, HIDOutputSession, Sendable {
     let versionNumber: UInt16 = 0x0001
     var descriptor: Data { Self.descriptor }
 
-    func makeSession() -> any HIDOutputSession { self }
+    func makeSession(deviceSerial: String?) -> any HIDOutputSession { self }
 
     // State-translation pipeline is bypassed — transformRawReport short-circuits
     // every BLE report. buildReport never runs in the dispatch path.

@@ -26,7 +26,7 @@ struct DualShock4Output: HIDOutputProfile, HIDOutputSession {
 
     var descriptor: Data { Self.descriptorBytes }
 
-    func makeSession() -> any HIDOutputSession { self }
+    func makeSession(deviceSerial: String?) -> any HIDOutputSession { self }
 
     // macOS sends rumble as USB Output Report 0x05:
     //   [id, flags, _, _, right(HF), left(LF), R, G, B, …lightbar timings]

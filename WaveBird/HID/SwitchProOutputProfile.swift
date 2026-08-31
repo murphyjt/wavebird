@@ -136,5 +136,7 @@ struct SwitchProOutput: HIDOutputProfile {
     // SwitchPro needs a stateful session: macOS's driver drives a subcommand
     // handshake and switches input report format from simple (0x3F) to full
     // (0x30) mid-stream. SwitchProSession holds that mode + reply counter.
-    func makeSession() -> any HIDOutputSession { SwitchProSession(log: stderrLog) }
+    func makeSession(deviceSerial: String?) -> any HIDOutputSession {
+        SwitchProSession(deviceSerial: deviceSerial, log: stderrLog)
+    }
 }

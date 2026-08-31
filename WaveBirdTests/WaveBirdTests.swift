@@ -256,3 +256,50 @@ struct VirtualHIDSerialTests {
         #expect(pair != solo)
     }
 }
+
+// The Switch Pro spoof reports a Bluetooth address in its device-info reply.
+// It was a fixed constant, so every WaveBird device claimed the same identity.
+// These pin the properties that make the derived version safe to report.
+struct SyntheticBluetoothAddressTests {
+
+    private func addr(_ serial: String?) -> [UInt8] {
+        SwitchProSession.syntheticBluetoothAddress(deviceSerial: serial)
+    }
+
+    @Test func isStableForOneSerial() {
+        // Must survive relaunches: Swift's Hasher is per-process seeded and
+        // would silently change the address every launch.
+        #expect(addr("HEW80007222278") == addr("HEW80007222278"))
+        #expect(addr(nil) == addr(nil))
+    }
+
+    @Test func differsPerController() {
+        let a = addr("HEW80007222278")
+        let b = addr("HBW51034416909")
+        let c = addr("HHW50000660421")
+        #expect(Set([a, b, c]).count == 3)
+    }
+
+    @Test func isSixBytes() {
+        #expect(addr("HEW80007222278").count == 6)
+        #expect(addr(nil).count == 6)
+    }
+
+    // Locally-administered + unicast: bit 1 set, bit 0 clear in the first
+    // octet. This is what makes collision with a real Nintendo-assigned
+    // address structurally impossible rather than merely unlikely.
+    @Test func isLocallyAdministeredUnicast() {
+        for serial in ["HEW80007222278", "HBW51034416909", "x", ""] {
+            let first = addr(serial)[0]
+            #expect(first & 0x02 == 0x02, "locally-administered bit must be set")
+            #expect(first & 0x01 == 0x00, "multicast bit must be clear")
+        }
+        #expect(addr(nil)[0] & 0x03 == 0x02)
+    }
+
+    @Test func neverReproducesTheOldFixedAddress() {
+        let old: [UInt8] = [0x98, 0xB6, 0xE9, 0x12, 0x34, 0x56]
+        #expect(addr("HEW80007222278") != old)
+        #expect(addr(nil) != old)
+    }
+}

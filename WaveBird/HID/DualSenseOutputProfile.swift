@@ -23,7 +23,7 @@ struct DualSenseOutput: HIDOutputProfile, HIDOutputSession {
 
     var descriptor: Data { Self.descriptorBytes }
 
-    func makeSession() -> any HIDOutputSession { self }
+    func makeSession(deviceSerial: String?) -> any HIDOutputSession { self }
 
     // macOS sends rumble as USB Output Report 0x02:
     //   [id, valid_flag0, valid_flag1, right_motor, left_motor, …haptic/lightbar]

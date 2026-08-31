@@ -49,7 +49,7 @@ struct XboxSeriesOutput: HIDOutputProfile {
 
     // Stateful: the session tracks the Guide-button edge for the GIP 0x07 packet,
     // so each connection gets a fresh actor rather than sharing `self`.
-    func makeSession() -> any HIDOutputSession { XboxSeriesSession() }
+    func makeSession(deviceSerial: String?) -> any HIDOutputSession { XboxSeriesSession() }
 
     // Real Series X BLE report descriptor (283 bytes) + a trailing vendor block
     // declaring the GIP input reports 0x07/0x20 so macOS delivers them to SDL.

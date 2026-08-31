@@ -28,6 +28,7 @@
 // SetIMUSensitivity, and a few NOPs. Anything else gets a plain ACK.
 
 import CoreHID
+import CryptoKit
 import Foundation
 
 actor SwitchProSession: HIDOutputSession {
@@ -39,9 +40,42 @@ actor SwitchProSession: HIDOutputSession {
     private(set) var inputMode: InputMode = .simple
     private var replyCounter: UInt8 = 0
     private let log: @Sendable (String) -> Void
+    // Reported in the device-info reply and the proprietary status reply.
+    private let bluetoothAddress: [UInt8]
 
-    init(log: @escaping @Sendable (String) -> Void = { _ in }) {
+    init(deviceSerial: String? = nil, log: @escaping @Sendable (String) -> Void = { _ in }) {
         self.log = log
+        self.bluetoothAddress = Self.syntheticBluetoothAddress(deviceSerial: deviceSerial)
+    }
+
+    // The Bluetooth address this spoof reports. It is SYNTHETIC on purpose.
+    //
+    // We present as a Switch 1 Pro Controller, a device that does not exist —
+    // there is no authentic address for it. Reporting the NS2 controller's real
+    // address would advertise one physical device's identity on behalf of a
+    // virtual device impersonating a different model, which is not more
+    // truthful, just differently synthetic, and leaks a hardware identifier.
+    // What we actually need is uniqueness: the address was previously a fixed
+    // constant, so every WaveBird Switch Pro device reported the same one, and
+    // two NS2 controllers in this mode at once were indistinguishable at the
+    // protocol level (the same class of collision as the per-mode VHID serial).
+    //
+    // Derivation is SHA-256 over the NS2 serial, first six bytes, with the
+    // locally-administered bit set and the multicast bit cleared — so it can
+    // never collide with a real Nintendo-assigned address, and it is stable
+    // across reconnects and app launches. Swift's Hasher is NOT usable here:
+    // it is seeded per process, so the address would change every launch.
+    //
+    // The NS2 protocol can return the controller's genuine address (cmd
+    // 0x15/0x01 with no request data), but that command only runs during LTK
+    // pairing — never for an already-bonded controller and never on the SYNC
+    // route — so fetching it would mean adding a pairing-family command to
+    // every init to solve a problem this covers for free.
+    static func syntheticBluetoothAddress(deviceSerial: String?) -> [UInt8] {
+        let seed = deviceSerial ?? "wavebird-no-serial"
+        var out = Array(SHA256.hash(data: Data(seed.utf8)).prefix(6))
+        out[0] = (out[0] | 0x02) & 0xFE   // locally administered, unicast
+        return out
     }
 
     // Process a Set Report request. Output Report 0x01 carries Bluetooth
@@ -194,13 +228,10 @@ actor SwitchProSession: HIDOutputSession {
             payload[1] = 0x21          // firmware minor (v4.33)
             payload[2] = 0x03          // controller type: Pro Controller
             payload[3] = 0x02          // unknown / filler
-            // MAC (big-endian) — first three bytes match Nintendo's OUI
-            payload[4] = 0x98
-            payload[5] = 0xB6
-            payload[6] = 0xE9
-            payload[7] = 0x12
-            payload[8] = 0x34
-            payload[9] = 0x56
+            // MAC, big-endian. Synthetic and per-controller — see
+            // syntheticBluetoothAddress. A real Pro Controller reports its own
+            // address here (verified on hardware 2026-08-30).
+            for i in 0..<6 { payload[4 + i] = bluetoothAddress[i] }
             payload[10] = 0x01         // unknown / filler
             // Color source: 0x01 = read from SPI, 0x02 = use host defaults. A
             // real Pro Controller reports 0x01 (verified on hardware
@@ -300,12 +331,9 @@ actor SwitchProSession: HIDOutputSession {
         case 0x01:  // Status
             bytes[2] = 0x00
             bytes[3] = 0x03  // Pro Controller
-            bytes[4] = 0x56
-            bytes[5] = 0x34
-            bytes[6] = 0x12
-            bytes[7] = 0xE9
-            bytes[8] = 0xB6
-            bytes[9] = 0x98
+            // Same address as the device-info reply, byte-reversed as this
+            // frame expects.
+            for (i, b) in bluetoothAddress.reversed().enumerated() { bytes[4 + i] = b }
             log("proprietary 0x01: status")
         case 0x02:
             log("proprietary 0x02: handshake")
