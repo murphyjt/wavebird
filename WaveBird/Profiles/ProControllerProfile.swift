@@ -247,9 +247,28 @@ struct ProControllerProfile: ControllerProfile {
     // Linear-axis swap (accel + gyro X/Y) follows the -90° about Z geometry
     // derived from SDL's switch.c and switch2.c remaps:
     //   NS1.X = +NS2.Y    NS1.Y = -NS2.X    NS1.Z = +NS2.Z
-    // Gyro Z (yaw) is additionally negated — empirically Apple's NS1 Pro
-    // driver inverts yaw relative to SDL's convention, so we pre-flip the
-    // wire byte so it lands right at the host.
+    //
+    // Gyro and accel MUST use this same rotation. GCMotion's gravity and
+    // attitude are sensor-fusion output: the filter integrates gyro and
+    // corrects the drift against the accelerometer. Negating a single gyro
+    // axis flips the transform's determinant to -1, making the gyro frame a
+    // mirror of the accel frame — the two then disagree about that axis and
+    // the fused attitude oscillates. Observed 2026-08-30 as roll visibly
+    // bouncing in a first-person game while pitch and yaw looked correct.
+    // Any future axis correction has to move BOTH gyro and accel to another
+    // proper rotation; never negate one gyro axis alone.
+    //
+    // Axis semantics, from SDL_hidapi_switch.c's sensor remap (SDL X/pitch =
+    // -rawY, Y/yaw = +rawZ, Z/roll = -rawX): in the NS1 frame emitted here
+    // gyroX is roll, gyroY is pitch, gyroZ is yaw.
+    //
+    // Gyro Z (yaw) previously carried an extra negation, on the reasoning that
+    // Apple's NS1 driver inverts yaw. That was measured 2026-05-17, one day
+    // after the bad factory IMU calibration blob landed (see SwitchProSession
+    // 0x6020) and while gyro Z's SDL-reading scale denominator was negative —
+    // i.e. against an already-inverted axis. Zeroing the origins removed the
+    // inversion and left the compensation stranded, which is why yaw read
+    // backwards until it was dropped.
     //
     // Accel scale matches NS1 (~4096 LSB/g); gyro scale is within ~15% of
     // NS1's ~40 rad/s full range so we pass through unscaled. Returns nil
@@ -269,9 +288,9 @@ struct ProControllerProfile: ControllerProfile {
             accelX: ay,
             accelY: negSat(ax),
             accelZ: az,
-            gyroX:  gy,
-            gyroY:  negSat(gx),
-            gyroZ:  negSat(gz)
+            gyroX:  gy,           // roll
+            gyroY:  negSat(gx),   // pitch
+            gyroZ:  gz            // yaw
         )
     }
 
