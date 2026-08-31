@@ -102,11 +102,11 @@ struct GameCubeProfile: ControllerProfile {
         let buttons = NS2ButtonBits.decode(d.buttonBits, table: NS2ButtonBits.gameCube)
 
         // Apply the per-controller trigger rest position read from flash 0x13140
-        // during init: subtract so a released trigger reads 0. Falls through to
+        // during init, then rescale so a full pull reaches 255. Falls through to
         // the raw byte when calibration hasn't arrived yet.
         let zeros = calibration.triggerZeros
-        let triggerL = zeros.map { d.rawTriggerL >= $0.left  ? d.rawTriggerL - $0.left  : 0 } ?? d.rawTriggerL
-        let triggerR = zeros.map { d.rawTriggerR >= $0.right ? d.rawTriggerR - $0.right : 0 } ?? d.rawTriggerR
+        let triggerL = zeros.map { Self.scaleTrigger(d.rawTriggerL, zero: $0.left)  } ?? d.rawTriggerL
+        let triggerR = zeros.map { Self.scaleTrigger(d.rawTriggerR, zero: $0.right) } ?? d.rawTriggerR
 
         // GC layout: ZL/Z are the top digital shoulders, L/R are the bottom
         // analog triggers (each click-detects at full pull). Tops → bumpers,
@@ -126,9 +126,38 @@ struct GameCubeProfile: ControllerProfile {
             triggerL: triggerL,
             triggerR: triggerR,
             buttons: buttons,
-            imu: nil,
+            // The GC populates the same report-0x05 motion block the Pro does —
+            // verified on hardware 2026-08-31: 99% of reports carry non-zero
+            // samples, ~4096/g at rest, gyro swinging to +/-3000 when rotated.
+            // It was previously requested via the feature mask and discarded.
+            //
+            // UNVERIFIED: the axis remap. NS2Report0x05.parseIMU applies the
+            // -90-about-Z geometry derived for the Pro Controller, whose shell
+            // holds its sensor board differently. Same-frame comparison against
+            // a real NS1 Pro is the way to check it (Tools/NS1Dump.swift imu
+            // virtual); do NOT judge it through GCMotion, which applies its own
+            // remap.
+            imu: NS2Report0x05.parseIMU(d.imuSlice),
             timestamp: .now,
             shoulders: shoulders
         )
     }
+
+    // Map a raw GC trigger byte onto 0...255.
+    //
+    // Subtracting the rest position alone is not enough: a full pull reads
+    // about 232, NOT 255, so the result topped out near (232 - zero) and the
+    // last ~20% of travel was unreachable. Both the rest offset and the 232
+    // full-scale constant come from SDL's MapTriggerAxis
+    // (SDL_hidapi_switch2.c), which computes
+    // clamp((value - zero) / (232 - zero), 0, 1). See README Credits.
+    static func scaleTrigger(_ raw: UInt8, zero: UInt8) -> UInt8 {
+        let span = Int(Self.triggerFullScale) - Int(zero)
+        guard span > 0 else { return raw }
+        let scaled = (Int(raw) - Int(zero)) * 255 / span
+        return UInt8(clamping: scaled)
+    }
+
+    // Raw value at full pull, from SDL. Not 255 — the hardware tops out here.
+    static let triggerFullScale: UInt8 = 232
 }

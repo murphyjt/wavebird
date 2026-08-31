@@ -235,7 +235,7 @@ struct ProControllerProfile: ControllerProfile {
             triggerL: 0,
             triggerR: 0,
             buttons: buttons,
-            imu: Self.parseIMU(d.imuSlice),
+            imu: NS2Report0x05.parseIMU(d.imuSlice),
             timestamp: .now,
             shoulders: shoulders
         )
@@ -274,31 +274,4 @@ struct ProControllerProfile: ControllerProfile {
     // NS1's ~40 rad/s full range so we pass through unscaled. Returns nil
     // when the slot is all zeros — IMU disabled or feature bit not yet
     // enabled.
-    private static func parseIMU(_ slice: Data) -> IMUSample? {
-        let i = slice.startIndex + 6
-        guard slice.endIndex - i >= 12 else { return nil }
-        let ax = readInt16LE(slice, at: i)
-        let ay = readInt16LE(slice, at: i + 2)
-        let az = readInt16LE(slice, at: i + 4)
-        let gx = readInt16LE(slice, at: i + 6)
-        let gy = readInt16LE(slice, at: i + 8)
-        let gz = readInt16LE(slice, at: i + 10)
-        if ax == 0 && ay == 0 && az == 0 && gx == 0 && gy == 0 && gz == 0 { return nil }
-        return IMUSample(
-            accelX: ay,
-            accelY: negSat(ax),
-            accelZ: az,
-            gyroX:  gy,           // roll
-            gyroY:  negSat(gx),   // pitch
-            gyroZ:  gz            // yaw
-        )
-    }
-
-    private static func readInt16LE(_ data: Data, at i: Data.Index) -> Int16 {
-        Int16(bitPattern: UInt16(data[i]) | (UInt16(data[i + 1]) << 8))
-    }
-
-    private static func negSat(_ v: Int16) -> Int16 {
-        v == .min ? .max : -v
-    }
 }
