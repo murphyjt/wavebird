@@ -36,6 +36,16 @@ let kMaxRead = 0x1D    // per-subcommand cap
 var args = CommandLine.arguments.dropFirst()
 let infoMode = (args.first == "info")
 if infoMode { args = args.dropFirst() }
+// `imu` mode: listen to input report 0x30 and decode the raw IMU frame. This is
+// the SENSOR frame the factory calibration is expressed in — unlike GCMotion,
+// which applies an undocumented remap of its own.
+let imuMode = (args.first == "imu")
+if imuMode { args = args.dropFirst() }
+// Normally the virtual device is rejected (see below). `virtual` deliberately
+// targets it instead — the only way to compare what WaveBird emits against real
+// hardware in the same sensor frame.
+let wantVirtual = (args.first == "virtual")
+if wantVirtual { args = args.dropFirst() }
 func parseAddr(_ s: String) -> UInt32? {
     s.hasPrefix("0x") || s.hasPrefix("0X")
         ? UInt32(s.dropFirst(2), radix: 16)
@@ -66,9 +76,24 @@ final class Pending: @unchecked Sendable {
 let pending = Pending()
 var reportBuffer = [UInt8](repeating: 0, count: 64)
 
+final class IMUBox: @unchecked Sendable {
+    var samples: [[Int]] = []       // accelX,Y,Z, gyroX,Y,Z per frame
+}
+let imuBox = IMUBox()
+
 let inputCallback: IOHIDReportCallback = { _, _, _, _, reportID, report, length in
     guard length >= 20 else { return }
     let b = UnsafeBufferPointer(start: report, count: length)
+    // Full-mode input report: 3 IMU frames of 12 bytes from offset 13, each six
+    // Int16 LE (accel XYZ then gyro XYZ). Apple's driver has already put the
+    // controller into 0x30 mode, so these arrive without us asking.
+    if imuMode {
+        let f: [UInt8] = (b[0] == 0x30) ? Array(b) : ([UInt8(reportID)] + Array(b))
+        guard f.count >= 25, f[0] == 0x30 else { return }
+        func i16(_ i: Int) -> Int { Int(Int16(bitPattern: UInt16(f[i]) | UInt16(f[i+1]) << 8)) }
+        imuBox.samples.append([i16(13), i16(15), i16(17), i16(19), i16(21), i16(23)])
+        return
+    }
     // Bluetooth frames carry the ID in byte 0; USB-style stacks strip it into
     // reportID. Accept either shape.
     let f: [UInt8] = (b[0] == 0x21) ? Array(b) : ([UInt8(reportID)] + Array(b))
@@ -101,10 +126,15 @@ func str(_ d: IOHIDDevice, _ key: String) -> String? {
     IOHIDDeviceGetProperty(d, key as CFString) as? String
 }
 let candidates = (IOHIDManagerCopyDevices(mgr) as? Set<IOHIDDevice>) ?? []
-let real = candidates.filter { (str($0, kIOHIDTransportKey) ?? "").lowercased() != "virtual" }
-for d in candidates where !real.contains(d) {
-    FileHandle.standardError.write(Data(
-        "skipping virtual device (serial \(str(d, kIOHIDSerialNumberKey) ?? "?")) — that's WaveBird's own spoof\n".utf8))
+let real = candidates.filter {
+    let isVirtual = (str($0, kIOHIDTransportKey) ?? "").lowercased() == "virtual"
+    return wantVirtual ? isVirtual : !isVirtual
+}
+if !wantVirtual {
+    for d in candidates where !real.contains(d) {
+        FileHandle.standardError.write(Data(
+            "skipping virtual device (serial \(str(d, kIOHIDSerialNumberKey) ?? "?")) — that's WaveBird's own spoof\n".utf8))
+    }
 }
 guard let dev = real.first else {
     FileHandle.standardError.write(Data("""
@@ -149,6 +179,47 @@ func readChunk(addr: UInt32, len: Int) -> [UInt8]? {
         CFRunLoopRunInMode(.defaultMode, 0.01, true)
     }
     return pending.data
+}
+
+// MARK: - Raw IMU sampling (input report 0x30)
+
+if imuMode {
+    // The IMU ships disabled and stays that way until a client asks for it —
+    // exactly like GCMotion's sensorsActive. Without this the 0x30 frames
+    // arrive at full rate with every IMU field zero.
+    var enable: [UInt8] = [0x01, 0x00,
+                           0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40,
+                           0x40, 0x01]
+    let erc = IOHIDDeviceSetReport(dev, kIOHIDReportTypeOutput, 0x01, &enable, enable.count)
+    let emsg = erc == kIOReturnSuccess
+        ? "IMU enable (subcmd 0x40 01) sent\n"
+        : String(format: "IMU enable failed rc=0x%08X\n", erc)
+    FileHandle.standardError.write(Data(emsg.utf8))
+    let settle = Date().addingTimeInterval(1.0)
+    while Date() < settle { CFRunLoopRunInMode(.defaultMode, 0.05, true) }
+    imuBox.samples.removeAll()
+    FileHandle.standardError.write(Data("Sampling raw IMU for 12s — leave the controller flat and still...\n".utf8))
+    let deadline = Date().addingTimeInterval(12)
+    while Date() < deadline { CFRunLoopRunInMode(.defaultMode, 0.05, true) }
+    let s = imuBox.samples
+    guard s.count > 10 else {
+        FileHandle.standardError.write(Data("only \(s.count) IMU frames — is the controller in full (0x30) mode?\n".utf8))
+        exit(1)
+    }
+    func med(_ idx: Int) -> Int {
+        let v = s.map { $0[idx] }.sorted(); return v[v.count / 2]
+    }
+    let ax = med(0), ay = med(1), az = med(2)
+    let gx = med(3), gy = med(4), gz = med(5)
+    let mag = (Double(ax*ax + ay*ay + az*az)).squareRoot()
+    print("raw IMU at rest — \(s.count) frames, median")
+    print(String(format: "  accel = (%+6d, %+6d, %+6d)   |a| = %.0f  (%.3f g at 4096/g)", ax, ay, az, mag, mag/4096))
+    print(String(format: "  gyro  = (%+6d, %+6d, %+6d)", gx, gy, gz))
+    let tilt = atan2((Double(ax*ax + ay*ay)).squareRoot(), Double(abs(az))) * 180 / .pi
+    print(String(format: "  tilt from vertical = %.1f deg", tilt))
+    print("\n  factory horizontal offsets at 0x6080 for comparison: (-688, 0, 4038)")
+    IOHIDDeviceClose(dev, IOOptionBits(kIOHIDOptionsTypeNone))
+    exit(0)
 }
 
 // MARK: - Device info (subcommand 0x02)
