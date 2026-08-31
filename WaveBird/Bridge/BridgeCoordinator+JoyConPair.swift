@@ -254,7 +254,10 @@ extension BridgeCoordinator {
             versionNumber: outProfile.versionNumber,
             serialNumber: VirtualHIDDevice.hidSerialNumber(deviceSerial: serial, modeID: modeID),
             transport: .usb,
-            onSetReport: onSetReport
+            onSetReport: onSetReport,
+            onGetReport: { type, id, maxSize in
+                await session.handleGetReport(type: type, id: id, maxSize: maxSize)
+            }
         ) else {
             // Drop the half-formed pair immediately — a non-nil joyConPair
             // slot implies a live VHID (see the property comment), and waiting

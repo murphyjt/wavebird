@@ -134,10 +134,116 @@ struct DualSenseOutput: HIDOutputProfile, HIDOutputSession {
         if s.contains(.stickR)     { b9 |= 0x80 }
         bytes[9] = b9
 
+        // Motion, at the real DualSense packet offsets (SDL's
+        // PS5StatePacketCommon_t, +1 for the report ID byte):
+        //   gyro  X/Y/Z -> 16..21,  accel X/Y/Z -> 22..27, six Int16 LE.
+        // These land inside the descriptor's vendor blocks, so macOS delivers
+        // them.
+        //
+        // MEASURED 2026-08-31 — who actually consumes this:
+        //   - SDL DOES. It parses report 0x01 motion at exactly these offsets
+        //     (SDL_hidapi_ps5.c), and gyro works in an SDL game.
+        //   - Apple's GameController driver does NOT. GCMotion advertises
+        //     rotationRate and reports exactly zero on every axis, across 52
+        //     polled samples, while correct values are provably on the wire (a
+        //     raw HID dump decodes to 1.011 g on +Y with the pad lying flat).
+        //     Answering the calibration feature report it asks for did not
+        //     change this. The reason is unestablished; the remaining suspects
+        //     are the other feature reads it makes (0x09, 0x0B, 0x20) or a
+        //     parse path we have not found.
+        // So this mode gives motion to SDL clients only. Do not judge it with a
+        // GameController-based probe — that measures the path that does not
+        // work.
+        //
+        // Two conversions are needed, because IMUSample is in Nintendo units
+        // and the NS1 sensor frame.
+        //
+        // Frame: composed from SDL's own two sensor remaps. Switch maps
+        // SDL.X = -raw.Y, SDL.Y = +raw.Z, SDL.Z = -raw.X, while PlayStation is
+        // identity (SDL_hidapi_ps5.c feeds GyroX/Y/Z straight through), so
+        //   DS.X = -NS.Y,  DS.Y = +NS.Z,  DS.Z = -NS.X
+        // That is a proper rotation (determinant +1) and is applied to accel
+        // and gyro alike — a single-axis negation would mirror one sensor
+        // against the other and make fused attitude oscillate.
+        // Sanity check: lying flat, NS reads mostly +Z, which maps to DS +Y —
+        // and SDL's accel convention is +Y up. Consistent.
+        //
+        // Scale: without a calibration feature report the host falls back to
+        // nominal units (SDL HIDAPI_DriverPS5_ApplyCalibrationData: gyro
+        // value*64/1024, accel value/8192), i.e. 16 LSB per deg/s and 8192 LSB
+        // per g. Nintendo gives 4096 LSB/g and 936/0x343B deg/s per LSB
+        // (14.285 LSB per deg/s). Our VHID answers GetReport with empty data,
+        // so that fallback is what a host will use.
+        if let imu = state.imu {
+            func put(_ v: Int, at i: Int) {
+                let c = Int16(clamping: v)
+                bytes[i] = UInt8(truncatingIfNeeded: UInt16(bitPattern: c))
+                bytes[i + 1] = UInt8(truncatingIfNeeded: UInt16(bitPattern: c) >> 8)
+            }
+            func gyro(_ v: Int16) -> Int { Int((Double(v) * Self.gyroScale).rounded()) }
+            func accel(_ v: Int16) -> Int { Int(v) * 2 }
+
+            put(gyro(negated(imu.gyroY)),  at: 16)   // DS.X = -NS.Y
+            put(gyro(imu.gyroZ),           at: 18)   // DS.Y = +NS.Z
+            put(gyro(negated(imu.gyroX)),  at: 20)   // DS.Z = -NS.X
+            put(accel(negated(imu.accelY)), at: 22)
+            put(accel(imu.accelZ),          at: 24)
+            put(accel(negated(imu.accelX)), at: 26)
+        }
+
         var b10: UInt8 = 0
         if s.contains(.home) { b10 |= 0x01 }
         if s.contains(.c)    { b10 |= 0x02 }
         bytes[10] = b10
         return Data(bytes)
+    }
+
+    // 16 LSB per deg/s (DualSense nominal) / 14.285 LSB per deg/s (Nintendo).
+    private static let gyroScale = 16.0 / (1.0 / (936.0 / Double(0x343B)))
+
+    // Negate without overflowing on Int16.min.
+    private func negated(_ v: Int16) -> Int16 { v == .min ? .max : -v }
+
+    // Apple's DualSense driver reads four feature reports during init
+    // (0x05 maxSize=41, 0x09, 0x0B, 0x20). 0x05 is the IMU calibration blob;
+    // answering it empty left GCMotion advertising rotationRate while every
+    // value stayed zero, even though correct motion bytes were on the wire.
+    //
+    // Layout from SDL_hidapi_ps5.c::HIDAPI_DriverPS5_LoadCalibrationData —
+    // all Int16 LE after the report ID:
+    //   1..6   gyro pitch/yaw/roll bias
+    //   7..18  gyro pitch+/-, yaw+/-, roll+/-
+    //   19..22 gyro speed +/-
+    //   23..34 accel X+/-, Y+/-, Z+/-
+    //
+    // Chosen so the derived sensitivities come out at the nominal values our
+    // report bytes are already scaled for, i.e. this blob is a no-op:
+    //   gyro  = (speedPlus + speedMinus) * 1024 / (plus - minus)
+    //         = 2048 * 1024 / 32768 = 64          (SDL's expected divisor)
+    //   accel = 2 * 8192 / (plus - minus)
+    //         = 16384 / 16384 = 1                  (likewise)
+    // Zero bias, symmetric ranges. SDL rejects |bias| > 1024 or a sensitivity
+    // more than 50% off those divisors, so staying exact keeps it accepted.
+    func handleGetReport(type: HIDReportType, id: HIDReportID?, maxSize: Int) async -> Data? {
+        guard type == .feature, id?.rawValue == 0x05 else { return nil }
+        var out = [UInt8](repeating: 0, count: 41)
+        out[0] = 0x05
+        func put(_ v: Int16, at i: Int) {
+            let u = UInt16(bitPattern: v)
+            out[i] = UInt8(truncatingIfNeeded: u)
+            out[i + 1] = UInt8(truncatingIfNeeded: u >> 8)
+        }
+        // 1..6 gyro bias: zero — we forward samples that already rest near zero.
+        for axis in 0..<3 {                       // 7..18 gyro per-axis range
+            put( 16384, at: 7 + axis * 4)
+            put(-16384, at: 9 + axis * 4)
+        }
+        put(1024, at: 19)                         // gyro speed +
+        put(1024, at: 21)                         // gyro speed -
+        for axis in 0..<3 {                       // 23..34 accel per-axis range
+            put( 8192, at: 23 + axis * 4)
+            put(-8192, at: 25 + axis * 4)
+        }
+        return Data(out.prefix(max(0, min(maxSize, out.count))))
     }
 }

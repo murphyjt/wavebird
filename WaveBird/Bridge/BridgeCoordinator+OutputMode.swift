@@ -156,7 +156,10 @@ extension BridgeCoordinator {
             versionNumber: out.versionNumber,
             serialNumber: VirtualHIDDevice.hidSerialNumber(deviceSerial: record.serial, modeID: modeID),
             transport: hidTransport(for: record),
-            onSetReport: onSetReport
+            onSetReport: onSetReport,
+            onGetReport: { type, id, maxSize in
+                await session.handleGetReport(type: type, id: id, maxSize: maxSize)
+            }
         ) else { return nil }
         hidAccessIssue = nil
         vhidFailureCooldowns[record.id] = nil

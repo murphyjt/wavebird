@@ -11,6 +11,7 @@ final class VirtualHIDDevice: Sendable {
     // Report back via the `device` argument — that's how the Switch Pro presentation
     // services the subcommand handshake.
     typealias SetReportHandler = @Sendable (HIDVirtualDevice, HIDReportType, HIDReportID?, Data) async -> Void
+    typealias GetReportHandler = @Sendable (HIDReportType, HIDReportID?, Int) async -> Data?
 
     init?(
         descriptor: Data,
@@ -21,7 +22,8 @@ final class VirtualHIDDevice: Sendable {
         versionNumber: UInt16 = 0x0001,
         serialNumber: String? = nil,
         transport: HIDDeviceTransport = .bluetoothLowEnergy,
-        onSetReport: SetReportHandler? = nil
+        onSetReport: SetReportHandler? = nil,
+        onGetReport: GetReportHandler? = nil
     ) {
         let properties = HIDVirtualDevice.Properties(
             descriptor: descriptor,
@@ -46,7 +48,7 @@ final class VirtualHIDDevice: Sendable {
             return nil
         }
         self.device = device
-        self.delegate = Delegate(onSetReport: onSetReport)
+        self.delegate = Delegate(onSetReport: onSetReport, onGetReport: onGetReport)
     }
 
     func activate() async {
@@ -59,9 +61,11 @@ final class VirtualHIDDevice: Sendable {
 
     private final class Delegate: HIDVirtualDeviceDelegate, Sendable {
         let onSetReport: SetReportHandler?
+        let onGetReport: GetReportHandler?
 
-        init(onSetReport: SetReportHandler?) {
+        init(onSetReport: SetReportHandler?, onGetReport: GetReportHandler?) {
             self.onSetReport = onSetReport
+            self.onGetReport = onGetReport
         }
 
         func hidVirtualDevice(
@@ -73,13 +77,22 @@ final class VirtualHIDDevice: Sendable {
             await onSetReport?(device, type, id, data)
         }
 
+        // Every Get Report currently answers empty. Logged because an
+        // unanswered feature read can silently gate driver behaviour — Sony
+        // pads publish IMU calibration this way (SDL reads
+        // k_EPS5FeatureReportIdCalibration before enabling sensors), so a
+        // driver asking here and getting nothing is a plausible reason for
+        // motion to stay dead.
         func hidVirtualDevice(
             _ device: HIDVirtualDevice,
             receivedGetReportRequestOfType type: HIDReportType,
             id: HIDReportID?,
             maxSize: Int
         ) async throws -> Data {
-            Data()
+            let answer = await onGetReport?(type, id, maxSize) ?? Data()
+            let idStr = id.map { String(format: "0x%02X", $0.rawValue) } ?? "-"
+            stderrLog("[hid] getReport type=\(type) id=\(idStr) maxSize=\(maxSize) -> \(answer.count) bytes")
+            return answer
         }
     }
 }

@@ -114,6 +114,11 @@ protocol HIDOutputSession: Sendable {
     func buildSecondaryReports(_ state: ControllerState) async -> [Data]
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async
 
+    // Answer a host Get Report. Feature reads are how Sony pads publish IMU
+    // calibration, and a driver that asks and gets nothing may quietly decline
+    // to enable sensors — so returning nil (the default) is not always inert.
+    func handleGetReport(type: HIDReportType, id: HIDReportID?, maxSize: Int) async -> Data?
+
     // Decode a host Set Report into a normalized RumbleCommand if this
     // session's protocol carries rumble in that report. The coordinator
     // forwards the result to ControllerProfile.encodeRumble and onto the
@@ -146,6 +151,8 @@ protocol HIDOutputSession: Sendable {
 }
 
 extension HIDOutputSession {
+    func handleGetReport(type: HIDReportType, id: HIDReportID?, maxSize: Int) async -> Data? { nil }
+
     func buildSecondaryReports(_ state: ControllerState) async -> [Data] { [] }
     func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {}
     func parseRumble(type: HIDReportType, id: HIDReportID?, data: Data) -> RumbleCommand? { nil }
