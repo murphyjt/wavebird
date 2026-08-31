@@ -385,26 +385,38 @@ actor SwitchProSession: HIDOutputSession {
             for i in 0..<min(length, colors.count) { out[out.startIndex + i] = colors[i] }
 
         case 0x6080:
-            // Factory stick parameters 1 — magic bytes the driver pattern-matches.
+            // 6-Axis Horizontal Offsets (dekuNukem spi_flash_notes.md, x6080-x6085):
+            // 3 Int16 LE giving the accelerometer's offset from origin when the
+            // controller rests on a flat surface — the grip/trigger bumps tilt it.
+            // These are the documented Pro Controller defaults (-688, 0, 4038), a
+            // per-MODEL shell constant, not per-unit deviation. Unlike the 0x6020
+            // origins they are correct to keep: they describe the Pro Controller
+            // shape we present as, and zeroing them would claim the pad sits flat.
+            // The trailing 0x0F is the first byte of stick parameters 1 at 0x6086,
+            // retained so an over-long read starting here stays contiguous.
             let params: [UInt8] = [0x50, 0xFD, 0x00, 0x00, 0xC6, 0x0F, 0x0F]
             for i in 0..<min(length, params.count) { out[out.startIndex + i] = params[i] }
 
-        case 0x6086:
-            // Factory stick parameters 2 — left stick dead-zone / range.
+        case 0x6086, 0x6098:
+            // Stick device parameters 1 (x6086-x6097) and 2 (x6098-x60A9).
+            // 18 bytes packing 12 nibble-packed uint16s: dead-zone, range ratio
+            // and hardware min/max ranges (dekuNukem spi_flash_notes.md,
+            // "Stick Parameters 1 & 2"). Both blocks answer with the same bytes —
+            // the doc notes parameters 2 are "normally the same with 1, even in
+            // Pro Contr."
+            //
+            // 0x6098 previously returned a copy of IMU-shaped bytes (three
+            // offsets then three 0x4000 sensitivities) under the label "factory
+            // IMU horizontal offsets". That was a misread of the SPI map: the
+            // real 6-Axis Horizontal Offsets live at 0x6080 and were already
+            // being served correctly there. Nothing in WaveBird's history
+            // sources those bytes, and the NS2 flash dumps in Tools/ hold
+            // unrelated data at this address, so they were never valid here.
             let params: [UInt8] = [
                 0x0F, 0x30, 0x61, 0xAE, 0x90, 0xD9, 0xD4, 0x14, 0x54,
                 0x41, 0x15, 0x54, 0xC7, 0x79, 0x9C, 0x33, 0x36, 0x63,
             ]
             for i in 0..<min(length, params.count) { out[out.startIndex + i] = params[i] }
-
-        case 0x6098:
-            // Factory IMU horizontal offsets.
-            let imu: [UInt8] = [
-                0xE8, 0xFF, 0xF8, 0xFF, 0x40, 0x00,
-                0x00, 0x40, 0x00, 0x40, 0x00, 0x40,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            ]
-            for i in 0..<min(length, imu.count) { out[out.startIndex + i] = imu[i] }
 
         default:
             break  // already 0xFF (uninitialized) — correct for user-cal regions
