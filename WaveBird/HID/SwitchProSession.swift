@@ -362,6 +362,15 @@ actor SwitchProSession: HIDOutputSession {
             //
             // With zero origins the scale reduces exactly to SDL's no-calibration
             // defaults: accel 4.0/0x4000 * G == G/4096, gyro 936/0x343B == 1/14.2842.
+            //
+            // A real Pro Controller (dumped 2026-08-30) carries small non-zero
+            // origins — accel (-162, -79, 511), gyro (-53, -35, -58), i.e. under
+            // 1% of the sensitivity coefficient except accel Z at ~3%. Zero sits
+            // squarely in that range; it is the "no deviation" case, not an
+            // outlier. The same dump confirms the sensitivity coefficients
+            // below are the real values. For contrast, the bogus origins this
+            // replaced (accel 5562/4450/4105, gyro 31175/-100/32711) ran to 25-34%
+            // and 233-245% of their coefficients — nothing like hardware.
             let cal: [UInt8] = [
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // accel origin XYZ (none to declare)
                 0x00, 0x40, 0x00, 0x40, 0x00, 0x40,   // accel sensitivity 0x4000
@@ -373,6 +382,20 @@ actor SwitchProSession: HIDOutputSession {
         case 0x603D:
             // Factory stick calibration — symmetric, centered at 0x800,
             // 0x800 above and 0x800 below. Packed (12,12)→3 bytes → 0x00 0x08 0x80.
+            //
+            // DELIBERATELY unlike real hardware, and it must stay that way. A
+            // genuine Pro Controller (dumped 2026-08-30) declares an off-centre
+            // origin and ~1400-1600 counts of travel per direction — e.g. left
+            // stick centre (2008, 2026), travel above (1484, 1517), below
+            // (1520, 1586) — because that is what its physical hardware does.
+            // The host normalises raw values as (raw - centre) / travel.
+            //
+            // We synthesise sticks: packStick12 emits a perfectly centred
+            // 12-bit range (centre 0x800, ±2047). So the calibration we publish
+            // has to describe OUR output, not some other unit's. Copying real
+            // travel figures here while still sending ±2047 would make full
+            // deflection normalise to 2047/1484 ≈ 1.38 and clip. The identity
+            // calibration is what keeps the mapping exact.
             let stick: [UInt8] = [
                 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80,  // L: max, center, min
                 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80,  // R: center, min, max
@@ -450,7 +473,14 @@ actor SwitchProSession: HIDOutputSession {
             for i in 0..<min(length, params.count) { out[out.startIndex + i] = params[i] }
 
         default:
-            break  // already 0xFF (uninitialized) — correct for user-cal regions
+            // already 0xFF (uninitialized) — correct for user-cal regions.
+            // Confirmed against hardware 2026-08-30: 0x8010-0x8040 on a real
+            // Pro Controller reads all 0xFF. The block is gated on a B2 A1
+            // magic at its head (SDL checks `== 0xA1B2` before preferring user
+            // calibration over factory), so all-0xFF is exactly how a
+            // never-user-calibrated controller answers, and both consumers fall
+            // back to the factory blocks as intended.
+            break
         }
         return out
     }
