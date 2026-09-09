@@ -28,6 +28,10 @@ enum TransportEvent: Sendable {
     case disconnected(DeviceID, DisconnectReason)
     case reportReceived(DeviceID, reportID: UInt8?, Data)
     case commandResponse(DeviceID, request: Data, response: CommandResponseFrame?)
+    /// Transport-derived metadata outside the BLE command/response shape
+    /// (e.g. a USB controller's serial from its GIP announce). Merged into the
+    /// device record just like a commandResponse would.
+    case deviceMetadata(DeviceID, ControllerMetadata)
     case unmatchedResponse(DeviceID, Data, sourceHandle: UInt16?)
     case error(DeviceID?, String)
     /// Transport-wide availability. `reason == nil` means available; non-nil

@@ -346,7 +346,7 @@ final class BridgeCoordinator {
     // Used to render the right icon tint for offline rows (we don't have a
     // live DeviceRecord for those).
     func profile(forProductID pid: UInt16) -> (any ControllerProfile)? {
-        profiles.first { $0.bleMatcher?.productID == pid || $0.usbMatcher?.productID == pid }
+        profiles.first { $0.bleMatcher?.productID == pid || $0.usbMatcher?.matches(productID: pid) == true }
     }
 
     // Returns whether this controller's serial is in our local paired dict.
