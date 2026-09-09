@@ -258,9 +258,15 @@ actor XboxSeriesSession: HIDOutputSession {
             return nil
         }
         func scale(_ v: UInt8) -> UInt16 { UInt16(min(65535, Int(v) * 65535 / 100)) }
+        // The main motors stay max(trigger, main) so trigger-only events still
+        // rumble pads that don't have trigger motors; the separate trigger
+        // fields ride along for pads that do (GameSir G7 Pro, Series impulse
+        // triggers) — encoders that can't drive them simply ignore them.
         return RumbleCommand(
             leftAmp: scale(max(ltMag, lMag)),
-            rightAmp: scale(max(rtMag, rMag))
+            rightAmp: scale(max(rtMag, rMag)),
+            leftTriggerAmp: scale(ltMag),
+            rightTriggerAmp: scale(rtMag)
         )
     }
 

@@ -229,6 +229,9 @@ extension BridgeCoordinator {
                 FileHandle.standardError.write(Data("[ble] resp:          (none)\n".utf8))
             }
 
+        case .deviceMetadata(let id, let meta):
+            mergeMetadata(meta, into: id)
+
         case .unmatchedResponse(_, let data, let sourceHandle):
             let label = sourceHandle.map { String(format: "0x%04X", $0) } ?? "?"
             FileHandle.standardError.write(Data("[ble] orphan \(label): \(hex(data))\n".utf8))
@@ -384,7 +387,7 @@ extension BridgeCoordinator {
     func profile(forProductID pid: UInt16, kind: TransportKind) -> (any ControllerProfile)? {
         switch kind {
         case .ble: return profiles.first { $0.bleMatcher?.productID == pid }
-        case .usb: return profiles.first { $0.usbMatcher?.productID == pid }
+        case .usb: return profiles.first { $0.usbMatcher?.matches(productID: pid) == true }
         }
     }
 }

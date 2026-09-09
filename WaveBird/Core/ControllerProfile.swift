@@ -71,6 +71,11 @@ struct ControllerMetadata: Sendable {
 // their rumble encoders, and the SwitchPro presentation reverses NS1 HD Rumble
 // bytes back through dekuNukem's amplitude lookup table to recover the
 // original value. 8-bit-source protocols (DS4/DualSense) scale up by 257.
+//
+// Trigger-motor amplitudes (Xbox impulse triggers / GameSir trigger rumble):
+// the Series PID report and GIP 0x09 carry LT/RT motor fields separately from
+// the two main rotors. Parsers that see them populate these fields; encoders
+// for pads with trigger motors use them, every other encoder ignores them.
 struct RumbleCommand: Sendable, Hashable {
     var leftAmp: UInt16 = 0
     var rightAmp: UInt16 = 0
@@ -80,8 +85,10 @@ struct RumbleCommand: Sendable, Hashable {
     // HF and LF bands of that side so the perceived pitch shifts cleanly.
     var leftFreqOverride: UInt16? = nil
     var rightFreqOverride: UInt16? = nil
+    var leftTriggerAmp: UInt16 = 0
+    var rightTriggerAmp: UInt16 = 0
 
-    var isStop: Bool { leftAmp == 0 && rightAmp == 0 }
+    var isStop: Bool { leftAmp == 0 && rightAmp == 0 && leftTriggerAmp == 0 && rightTriggerAmp == 0 }
 }
 
 // Cross-controller shoulder/trigger model. "Bumper" = top secondary, "trigger"
@@ -170,9 +177,26 @@ struct InputChannel: Sendable {
 }
 
 struct USBMatcher: Sendable {
-    let vendorID: UInt16
-    let productID: UInt16
+    // Wired GIP pads are identified by vendor-class interface (0xFF/0x47/0xD0),
+    // not by VID/PID — Microsoft, GameSir, PowerA, 8BitDo, Hori, PDP, …
+    // all expose it. Empty arrays = match any vendor/product whose interface
+    // passed the transport's GIP check (the identify handshake then confirms
+    // it's a gamepad). Non-empty arrays narrow the match.
+    let vendorIDs: [UInt16]
+    let productIDs: [UInt16]
     let initWrites: [USBInitStep]
+
+    init(vendorIDs: [UInt16] = [], productIDs: [UInt16] = [], initWrites: [USBInitStep] = []) {
+        self.vendorIDs = vendorIDs
+        self.productIDs = productIDs
+        self.initWrites = initWrites
+    }
+
+    func matches(vendorID: UInt16? = nil, productID: UInt16) -> Bool {
+        let vendorOK = vendorIDs.isEmpty || (vendorID.map { vendorIDs.contains($0) } ?? false)
+        let productOK = productIDs.isEmpty || productIDs.contains(productID)
+        return vendorOK && productOK
+    }
 }
 
 struct USBInitStep: Sendable {
