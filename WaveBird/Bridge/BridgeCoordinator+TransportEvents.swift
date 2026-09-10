@@ -273,10 +273,8 @@ extension BridgeCoordinator {
 
         case .reportReceived(let id, let reportID, let data):
             guard let record = devices[id] else { return }
-            // Raw-forwarding session path (ns2Passthrough): dispatch the transport
+            // Raw-forwarding session path (ns2Relay): dispatch the transport
             // bytes verbatim under the right HID report ID, bypassing parsing.
-            // Used so Pro can emit BLE Report 0x09 — which the state-translation
-            // path can't decode — while still letting 0x05 ride through.
             if let session = record.session,
                let vhid = record.virtualHID,
                let raw = session.transformRawReport(reportID: reportID, data: data) {

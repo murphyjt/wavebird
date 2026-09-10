@@ -283,3 +283,41 @@ struct NS2RelayTransformTests {
         #expect(NS2RelayOutput.rumbleReportID(forProductID: 0x2009) == nil)
     }
 }
+
+@MainActor
+struct NS2RelayCatalogTests {
+
+    @Test func relayIsInTheDebugCatalogAndNotAllowListed() {
+        let catalog = HIDOutputCatalog.default
+        #if DEBUG
+        let entry = catalog.entry(id: "ns2Relay")
+        #expect(entry?.displayName == "NS2 Relay (SDL)")
+        #expect(entry?.makeProfile(GameCubeProfile()) is NS2RelayOutput)
+        #else
+        #expect(catalog.entry(id: "ns2Relay") == nil)
+        #endif
+        #expect(!HIDOutputCatalog.allowListIDs.contains("ns2Relay"))
+        #expect(catalog.entry(id: "ns2Passthrough") == nil)
+        #expect(catalog.entry(id: "switch2ProSDL") == nil)
+    }
+
+    @Test func removedModeIDsResolveToTheDefaultShippingMode() {
+        // Persisted preferences naming the deleted modes must degrade, not crash.
+        let catalog = HIDOutputCatalog.default
+        #expect(catalog.resolved(id: "ns2Passthrough").id == catalog.firstAllowListedID)
+        #expect(catalog.resolved(id: "switch2ProSDL").id == catalog.firstAllowListedID)
+    }
+
+    @Test func relayHasNoMappingControls() {
+        // Relay bypasses buildReport; mapping is meaningless there.
+        #expect(MappingControls.controls(forModeID: "ns2Relay").isEmpty)
+    }
+
+    @Test func pairPickerHidesRelayProfiles() {
+        // The merged Joy-Con pair never relays. The filter is by base mode ID.
+        let store = MappingProfileStore(catalog: .default, defaults: UserDefaults(suiteName: "NS2RelayCatalogTests")!)
+        let visible = HIDOutputCatalog.pairSelectableProfiles(from: store.builtInProfiles + store.customProfiles)
+        #expect(!visible.contains { $0.baseModeID == "ns2Relay" })
+        #expect(visible.contains { $0.baseModeID == "switchPro" })
+    }
+}

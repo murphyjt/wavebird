@@ -76,8 +76,8 @@ struct MappingControlsTests {
     }
 
     @Test func debugOnlyModesHaveNoCatalog() {
-        // Passthrough bypasses buildReport entirely; mapping is meaningless there.
-        #expect(MappingControls.controls(forModeID: "ns2Passthrough").isEmpty)
+        // Relay bypasses buildReport entirely; mapping is meaningless there.
+        #expect(MappingControls.controls(forModeID: "ns2Relay").isEmpty)
     }
 }
 

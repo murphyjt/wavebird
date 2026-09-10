@@ -65,12 +65,23 @@ struct HIDOutputCatalog: Sendable {
         ]
 
         #if DEBUG
-        entries.append(Entry(id: "ns2Passthrough", displayName: "NS2 Passthrough (raw)") { NS2PassthroughOutput(profile: $0) })
-        entries.append(Entry(id: "switch2ProSDL", displayName: "Switch 2 Pro (SDL)") { _ in Switch2ProSDLOutput() })
+        // DEBUG-only until a released SDL carries the virtual transport: a
+        // stock SDL app would see a raw NS2 it cannot initialise.
+        entries.append(Entry(id: "ns2Relay", displayName: "NS2 Relay (SDL)") { NS2RelayOutput(profile: $0) })
         #endif
 
         return HIDOutputCatalog(entries: entries)
     }()
+}
+
+extension HIDOutputCatalog {
+    // Modes the merged Joy-Con pair may never use. SDL combines two relayed
+    // Joy-Cons itself, and JoyConPairProfile has no real identity to relay.
+    static let pairExcludedModeIDs: Set<String> = ["ns2Relay"]
+
+    static func pairSelectableProfiles(from profiles: [MappingProfile]) -> [MappingProfile] {
+        profiles.filter { !pairExcludedModeIDs.contains($0.baseModeID) }
+    }
 }
 
 protocol HIDOutputProfile: Sendable {
@@ -167,82 +178,6 @@ extension HIDOutputSession {
     func transformRawReport(reportID: UInt8?, data: Data) -> Data? { nil }
     func rawVibrationPayload(type: HIDReportType, id: HIDReportID?, data: Data) -> Data? { nil }
     func relayCommand(type: HIDReportType, id: HIDReportID?, data: Data) -> Data? { nil }
-}
-
-// MARK: - NS2 raw passthrough
-
-// Forwards raw BLE input reports as-is under a vendor HID descriptor. For Pro,
-// the descriptor mirrors Nintendo's physical USB Pro Controller (reports 5/9
-// in, 2 out) and we forward both BLE Report 0x05 (shared input handle) and
-// Report 0x09 (per-controller input handle) verbatim. Host Set Reports
-// (Report 0x02 — subcommands / rumble from SDL's Switch2 init path) are
-// logged to stderr so we can see exactly what the host is trying.
-struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
-    let profile: any ControllerProfile
-
-    var vendorID: UInt16    { profile.hidVendorID }
-    var productID: UInt16   { profile.hidProductID }
-    var productName: String { profile.name }
-    var manufacturer: String? { "Nintendo" }
-    var versionNumber: UInt16 { 0x0001 }
-    var descriptor: Data    { profile.relayDescriptor }
-
-    // Passthrough forwards Pro's Report 0x09 (handle 0x000E) verbatim alongside
-    // the shared 0x05, so it needs that secondary channel subscribed.
-    var requiredSecondaryReportIDs: Set<UInt8> { [0x09] }
-
-    func makeSession(deviceSerial: String?) -> any HIDOutputSession { self }
-
-    // The state-translation pipeline is short-circuited by transformRawReport,
-    // so buildReport never produces a useful frame in passthrough mode.
-    func buildReport(_ state: ControllerState) async -> Data { Data() }
-
-    // Forward each BLE input report verbatim with its HID report ID prefixed.
-    // BLE delivers payloads without a leading report-ID byte; we add it so the
-    // host's parser keys the data against the right descriptor entry. Payloads
-    // are padded to 63 bytes (the descriptor's declared report count) when the
-    // BLE frame is shorter — BLE's MTU sometimes truncates by a byte vs USB.
-    func transformRawReport(reportID: UInt8?, data: Data) -> Data? {
-        let id: UInt8 = reportID ?? 0x05  // Shared BLE input is unprefixed → Report 5.
-        var payload = data.prefix(63)
-        if payload.count < 63 {
-            payload.append(Data(repeating: 0, count: 63 - payload.count))
-        }
-        return Data([id]) + payload
-    }
-
-    func handleSetReport(device: HIDVirtualDevice, type: HIDReportType, id: HIDReportID?, data: Data) async {
-        let idStr: String
-        if let id { idStr = String(format: "0x%02X", id.rawValue) } else { idStr = "—" }
-        let hex = data.prefix(64).map { String(format: "%02X", $0) }.joined(separator: " ")
-        let suffix = data.count > 64 ? " … (\(data.count) bytes)" : ""
-        FileHandle.standardError.write(Data(
-            "[passthrough] set-report type=\(type) id=\(idStr) data=[\(hex)]\(suffix)\n".utf8
-        ))
-    }
-
-    // Relay the host's Output Report 0x02 (Pro Controller native rumble format)
-    // to the BLE vibration char with no re-encoding. CoreHID delivers `data` as
-    // the full on-wire frame (64 bytes: report ID + 63 payload), with layout
-    //   data[0]      = 0x02 (report ID)
-    //   data[1]      = state byte L  (enable | ops_cnt | tid)
-    //   data[2..6]   = left  LRA op  (5b, BlueRetro sw2_lra_op_t)
-    //   data[7..16]  = padding
-    //   data[17]     = state byte R
-    //   data[18..22] = right LRA op
-    //   data[23..]   = padding / reserved
-    // BLE wire format is the same layout shifted: byte 0 is 0x00 (BLE framing,
-    // not a HID ID) and total length is 42 bytes. Pro-only — GC's single-motor
-    // 0x03 and JoyCon's 0x01 have different layouts that we don't currently
-    // forward in passthrough.
-    func rawVibrationPayload(type: HIDReportType, id: HIDReportID?, data: Data) -> Data? {
-        guard type == .output, id?.rawValue == 0x02 else { return nil }
-        guard profile.hidProductID == 0x2069 else { return nil }
-        guard data.count >= 42 else { return nil }
-        var payload = Data(data.prefix(42))
-        payload[payload.startIndex] = 0x00
-        return payload
-    }
 }
 
 // MARK: - Stick / hat helpers

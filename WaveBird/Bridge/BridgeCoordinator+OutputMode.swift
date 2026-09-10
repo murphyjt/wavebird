@@ -131,7 +131,7 @@ extension BridgeCoordinator {
     }
 
     // Tell the transport which optional secondary input channels the resolved
-    // output mode needs (e.g. ns2Passthrough wants Pro's Report 0x09). Called
+    // output mode needs (none today; relay explicitly needs none). Called
     // whenever a mode activates or changes; for modes that need none (every
     // shipping presentation), this unsubscribes any previously-enabled channel.
     func applySecondaryInputs(for id: DeviceID, modeID: String) async {

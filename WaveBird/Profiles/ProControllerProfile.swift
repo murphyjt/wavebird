@@ -12,10 +12,9 @@ struct ProControllerProfile: ControllerProfile {
             NS2Handle.uuid(h, for: .pro).map { ResponseChannel(uuid: $0, handle: h) }
         }
         // Pro's per-controller input handle (0x000E) delivers Report 0x09 —
-        // the same sticks/buttons as Report 0x05 plus battery + motion. The
-        // state-translation path only consumes 0x05 (parseBLEReport), but
-        // ns2Passthrough also forwards 0x09 verbatim so the host sees the
-        // descriptor's structured button/axis report.
+        // the same sticks/buttons as Report 0x05 plus battery + motion. Listed
+        // as the catalog of available channels only: nothing subscribes it
+        // (subscribing suppresses 0x05 — see CLAUDE.md).
         let secondaryInputs: [InputChannel] = NS2Handle.uuid(NS2Handle.inputReportVariant, for: .pro)
             .map { [InputChannel(uuid: $0, reportID: 0x09)] } ?? []
         return BLEMatcher(

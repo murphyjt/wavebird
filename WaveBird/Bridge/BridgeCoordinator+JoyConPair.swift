@@ -174,8 +174,11 @@ extension BridgeCoordinator {
         guard let left = devices[leftID], let right = devices[rightID] else { return }
         joyConPair = JoyConPair(leftID: leftID, rightID: rightID)
 
-        let storedProfileID: String? = left.serial.flatMap { knownControllers[$0]?.resolvedProfileID }
-            ?? right.serial.flatMap { knownControllers[$0]?.resolvedProfileID }
+        // A side whose solo preference is relay contributes nothing here; the
+        // pair falls through to the picker (or the other side's preference).
+        let storedProfileID: String? = [left.serial, right.serial]
+            .compactMap { $0.flatMap { knownControllers[$0]?.resolvedProfileID } }
+            .first { !HIDOutputCatalog.pairExcludedModeIDs.contains(resolveMappingProfile(id: $0).baseModeID) }
 
         if let storedProfileID {
             await activateJoyConPair(profileID: storedProfileID)

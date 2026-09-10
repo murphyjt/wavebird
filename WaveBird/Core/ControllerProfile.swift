@@ -134,9 +134,9 @@ struct BLEMatcher: Sendable {
     let initCommands: [Data]
     let vibrationCharacteristic: CBUUID?
     // Optional secondary input characteristics whose notifications are
-    // forwarded verbatim through HIDOutputSession.transformRawReport (used
-    // by ns2Passthrough). Notifications on these are tagged with the channel's
-    // reportID — they don't run through parseBLEReport.
+    // forwarded verbatim through HIDOutputSession.transformRawReport
+    // (none subscribed today). Notifications on these are tagged with the
+    // channel's reportID — they don't run through parseBLEReport.
     let secondaryInputs: [InputChannel]
 
     init(

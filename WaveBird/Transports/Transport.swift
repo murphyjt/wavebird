@@ -15,7 +15,7 @@ protocol Transport: Actor {
     // Subscribe/unsubscribe the device's optional secondary input channels to
     // match `reportIDs` (a subset of the matcher's declared `secondaryInputs`).
     // The primary input is always subscribed; secondaries are opt-in per output
-    // mode — e.g. only ns2Passthrough wants Pro's Report 0x09 on handle 0x000E.
+    // mode — none of the current modes subscribes one.
     // The coordinator calls this when an output mode resolves or changes.
     func setSecondaryInputs(_ reportIDs: Set<UInt8>, for id: DeviceID) async
 }

@@ -19,6 +19,13 @@ struct ProfilePickerSheet: View {
         _selectedProfileID = State(initialValue: MappingProfile.defaultProfileID(forModeID: baseID))
     }
 
+    // A pair-keyed picker (L's row while the pair forms) hides relay profiles.
+    private var availableProfiles: [MappingProfile] {
+        let all = coordinator.mappingProfiles.builtInProfiles + coordinator.mappingProfiles.customProfiles
+        guard coordinator.joyConPair?.includes(deviceID) == true else { return all }
+        return HIDOutputCatalog.pairSelectableProfiles(from: all)
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             VStack(spacing: 6) {
@@ -32,7 +39,7 @@ struct ProfilePickerSheet: View {
             }
 
             Picker("Profile", selection: $selectedProfileID) {
-                ForEach(coordinator.mappingProfiles.builtInProfiles + coordinator.mappingProfiles.customProfiles) { profile in
+                ForEach(availableProfiles) { profile in
                     let appearance = ProfileAppearance.resolve(profile)
                     Label {
                         Text(profile.name)
