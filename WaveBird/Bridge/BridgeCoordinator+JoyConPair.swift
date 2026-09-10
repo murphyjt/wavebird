@@ -198,7 +198,15 @@ extension BridgeCoordinator {
         guard let pair = joyConPair,
               let left = devices[pair.leftID],
               let right = devices[pair.rightID] else { return }
-        let profile = resolveMappingProfile(id: profileID)
+        var profile = resolveMappingProfile(id: profileID)
+        // Every path into this function funnels here, so this is the one place
+        // that must hold the line: relay's buildReport returns empty Data(),
+        // and the pair dispatch calls it unconditionally, so a relay profile
+        // would go silent rather than error. Substitute rather than bail —
+        // the pair should keep working with something.
+        if HIDOutputCatalog.pairExcludedModeIDs.contains(profile.baseModeID) {
+            profile = resolveMappingProfile(id: MappingProfile.defaultProfileID(forModeID: catalog.firstAllowListedID))
+        }
         let modeID = profile.baseModeID
 
         if let serial = left.serial { persistPairPreference(profileID: profile.id, forSerial: serial, record: left) }

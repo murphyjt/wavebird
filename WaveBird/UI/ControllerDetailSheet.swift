@@ -147,11 +147,19 @@ struct ControllerDetailSheet: View {
     private func generalTab(live: DeviceRecord?, paired: KnownController?, xbox: XboxOutputSettings?) -> some View {
         let binding = profileBinding(live: live, paired: paired)
         let selectedBase = coordinator.resolveMappingProfile(id: binding.wrappedValue).baseModeID
+        // A merged pair member hides relay profiles, same as ProfilePickerSheet.
+        let isPairMember = live.map { coordinator.joyConPair?.includes($0.id) == true } ?? false
+        let builtInProfiles = isPairMember
+            ? HIDOutputCatalog.pairSelectableProfiles(from: coordinator.mappingProfiles.builtInProfiles)
+            : coordinator.mappingProfiles.builtInProfiles
+        let customProfiles = isPairMember
+            ? HIDOutputCatalog.pairSelectableProfiles(from: coordinator.mappingProfiles.customProfiles)
+            : coordinator.mappingProfiles.customProfiles
         Form {
             Section {
                 LabeledContent("Use profile") {
                     Picker("", selection: binding) {
-                        ForEach(coordinator.mappingProfiles.builtInProfiles) { profile in
+                        ForEach(builtInProfiles) { profile in
                             let appearance = ProfileAppearance.resolve(profile)
                             Label {
                                 Text(profile.name)
@@ -160,9 +168,9 @@ struct ControllerDetailSheet: View {
                             }
                             .tag(profile.id)
                         }
-                        if !coordinator.mappingProfiles.customProfiles.isEmpty {
+                        if !customProfiles.isEmpty {
                             Divider()
-                            ForEach(coordinator.mappingProfiles.customProfiles) { profile in
+                            ForEach(customProfiles) { profile in
                                 let appearance = ProfileAppearance.resolve(profile)
                                 Label {
                                     Text(profile.name)
