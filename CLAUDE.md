@@ -87,7 +87,7 @@ Three SwiftUI scenes in `WaveBirdApp.body`:
 
 - `ns2Relay` publishes a solo controller under its real VID/PID with the real report set plus a vendor command tunnel (`0x80` out / `0x81` in). SDL's Switch 2 driver, patched with a virtual transport, runs its own init through the tunnel; WaveBird only moves bytes. Contract and rationale: `docs/superpowers/specs/2026-09-10-ns2-relay-design.md`; SDL side: `docs/superpowers/plans/2026-09-10-sdl-virtual-transport.md`.
 - `CommandTunnel` (`Bridge/CommandTunnel.swift`) is a per-connection actor that serialises every post-`.ready` `sendAwaitingResponse` — relay commands and the LTK pairing exchange both go through it, which is what keeps `BLETransport`'s one-pending-command precondition safe when CoreHID delivers set-reports concurrently.
-- Set-report `data` from CoreHID includes the report ID at index 0 (the `VirtualHIDDevice.SetReportHandler` doc comment is wrong about this; every parser in `HID/` indexes accordingly). Relay rewrites byte 0 to `0x00` for rumble and drops it for tunnel frames.
+- Set-report `data` from CoreHID includes the report ID at index 0 (the `VirtualHIDDevice.SetReportHandler` doc comment says so; every parser in `HID/` indexes accordingly). Relay rewrites byte 0 to `0x00` for rumble and drops it for tunnel frames.
 - Relay descriptors for GC/Joy-Con carry a Generic Desktop / Game Pad outer collection because SDL's only-controllers filter rejects bare vendor-page devices.
 - Stays DEBUG-only until a released SDL carries `SDL_HID_API_BUS_VIRTUAL`.
 
