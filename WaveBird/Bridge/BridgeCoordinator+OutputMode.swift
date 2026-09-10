@@ -146,7 +146,7 @@ extension BridgeCoordinator {
         let rumbleBox = RumbleRefreshBox()
         rumbleRefreshBoxes[record.id] = rumbleBox
         let settings = rumbleSettings(for: record)
-        let onSetReport = makeSetReportHandler(id: record.id, transport: transport(for: record.id.transport), profile: record.profile, rumbleRefresh: rumbleBox, session: session, settings: settings)
+        let onSetReport = makeSetReportHandler(id: record.id, transport: transport(for: record.id.transport), profile: record.profile, rumbleRefresh: rumbleBox, session: session, settings: settings, tunnel: record.commandTunnel)
         guard let vhid = VirtualHIDDevice(
             descriptor: out.descriptor,
             vendorID: out.vendorID,
@@ -214,22 +214,46 @@ extension BridgeCoordinator {
         profile: any ControllerProfile,
         rumbleRefresh: RumbleRefreshBox,
         session: any HIDOutputSession,
-        settings: RumbleSettings
+        settings: RumbleSettings,
+        tunnel: CommandTunnel?
     ) -> VirtualHIDDevice.SetReportHandler {
         return { device, type, id, data in
             let idStr = id.map { String(format: "0x%02X", $0.rawValue) } ?? "-"
             let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
             stderrLog("[hid] setReport type=\(type) id=\(idStr) len=\(data.count) [\(hex)]")
 
-            // Passthrough modes can hand us a pre-formed BLE vibration payload.
-            // When non-nil, send it verbatim and skip parseRumble → encodeRumble:
-            // the host is already speaking the controller's native rumble format,
-            // and we'd lose per-band freq/amp fidelity if we normalized through
-            // RumbleCommand. We also cancel any in-flight refresh task — the host
-            // drives cadence itself in passthrough.
+            // Relay tunnel: an SDL command frame for the controller. One in
+            // flight per device (CommandTunnel serialises); the response, if
+            // one arrives within the bridge deadline, goes back as Input
+            // Report 0x81. No response → nothing is sent; SDL's own 2 s
+            // deadline handles it.
+            if let frame = session.relayCommand(type: type, id: id, data: data) {
+                guard let tunnel else { return }
+                // `try?` flattens the throw and the no-response nil into one
+                // optional: either way nothing is dispatched.
+                if let response = try? await tunnel.send(frame, timeout: .seconds(1)) {
+                    try? await device.dispatchInputReport(data: NS2RelayOutput.tunnelResponseReport(response.data), timestamp: .now)
+                }
+                return
+            }
+
+            // Relay rumble: the host already speaks the controller's native
+            // rumble format, so send it verbatim and skip parseRumble →
+            // encodeRumble (normalising through RumbleCommand would lose
+            // per-band freq/amp fidelity). The host drives cadence, so any
+            // in-flight refresh loop is cancelled — but the 1 s stop watchdog
+            // is kept: if the host goes silent (crash, focus loss), an
+            // encoded stop frame quiets the motor.
             if let payload = session.rawVibrationPayload(type: type, id: id, data: data) {
                 rumbleRefresh.cancel()
                 try? await transport?.sendVibration(payload, to: deviceID)
+                rumbleRefresh.replace(with: Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    if Task.isCancelled { return }
+                    if let stop = profile.encodeRumble(RumbleCommand(), sequence: rumbleRefresh.nextCounter(), settings: settings.snapshot()) {
+                        try? await transport?.sendVibration(stop, to: deviceID)
+                    }
+                })
                 await session.handleSetReport(device: device, type: type, id: id, data: data)
                 return
             }

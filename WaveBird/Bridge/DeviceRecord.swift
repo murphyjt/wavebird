@@ -41,6 +41,11 @@ struct DeviceRecord: Identifiable {
     // makeSession(). Stateless outputs return self; stateful presentations (Switch
     // Pro) return an actor that owns handshake/mode state for this connection.
     var session: (any HIDOutputSession)?
+    // Serialises every post-.ready awaited command (relay tunnel, LTK
+    // pairing) for this connection. Created at .ready, dropped at
+    // .disconnected — outlives any one VHID so a republish can't strand a
+    // pairing exchange in flight.
+    var commandTunnel: CommandTunnel?
     var awaitingProfileSelection: Bool = false
 }
 

@@ -158,6 +158,9 @@ extension BridgeCoordinator {
             // Seed activity so the idle sweep doesn't drop a freshly-connected
             // controller before it sends any input.
             activityTracker.seed(id)
+            if let t = transport(for: kind) {
+                devices[id]?.commandTunnel = CommandTunnel(transport: t, deviceID: id)
+            }
             guard let record = devices[id] else { return }
             // Joy-Cons take a separate path: solo Joy-Con play promotes via
             // handleJoyConReady. LTK pairing for each Joy-Con is deferred
@@ -270,6 +273,7 @@ extension BridgeCoordinator {
             }
             devices[id]?.virtualHID = nil
             devices[id]?.session = nil
+            devices[id]?.commandTunnel = nil
 
         case .reportReceived(let id, let reportID, let data):
             guard let record = devices[id] else { return }
