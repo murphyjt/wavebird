@@ -218,10 +218,12 @@ design)`) and superseded; do not reapply it.
 
 ### Bus type plumbing
 
-- `include/SDL3/SDL_hidapi.h`: `SDL_HID_API_BUS_VIRTUAL = 0x05` with a doc
-  comment ("a software bridge publishing a virtual HID device; the bridge owns
-  the physical link").
-- `src/hidapi/hidapi/hidapi.h`: `HID_API_BUS_VIRTUAL = 0x05`.
+- `include/SDL3/SDL_hidapi.h`: `SDL_HID_API_BUS_VIRTUAL` with a doc comment
+  ("a software bridge publishing a virtual HID device; the bridge owns the
+  physical link"). The numeric value is the SDL maintainer's call; the issue
+  asks for it and the local patch uses the next free value (`0x05`) only as a
+  placeholder until then.
+- `src/hidapi/hidapi/hidapi.h`: `HID_API_BUS_VIRTUAL`, same value.
 - `src/hidapi/mac/hid.c`: in both transport switches, map
   `kIOHIDTransportVirtualValue` (`"Virtual"`) to `HID_API_BUS_VIRTUAL`.
 - `src/hidapi/linux/hid.c`: admit `BUS_VIRTUAL` (`0x06` from `linux/input.h`)
@@ -258,7 +260,8 @@ design)`) and superseded; do not reapply it.
 ### Upstream plan
 
 1. Open an SDL issue describing the contract and naming WaveBird as the
-   shipping bridge. Ask specifically about the public enum addition.
+   shipping bridge. Ask specifically about the public enum addition and let
+   the maintainer pick its value.
 2. PR after the issue has a response, with the hardware results below.
 3. Until the change is in a released SDL, WaveBird keeps `ns2Relay` DEBUG-only.
    Dolphin for local testing is built against the patched SDL (existing
