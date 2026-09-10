@@ -1315,7 +1315,8 @@ No code. Requires the SDL plan's Tasks 1–2 applied and Dolphin or `testcontrol
 - [ ] **Step 5: Init latency** — in WaveBird's stderr log, note the time between a `[hid] setReport … id=0x80` line and the following `0x81` dispatch for each init command once; confirm all are under 1 s.
 - [ ] **Step 6: Watchdog** — start rumble in `testcontroller`, then kill it (`kill -9`); the motor must stop within about 1 s.
 - [ ] **Step 7: Late pairing accept** — forget the controller, reconnect with relay active, and press Accept on the LTK prompt while `testcontroller` is starting. Expect: no crash (`overlapping sendAwaitingResponse` precondition), pairing completes, SDL init completes.
-- [ ] **Step 8: GameController claim check** — with relay active, run `Tools/GameControllerProbe.swift` and note whether macOS claims the raw NS2 VID/PID as a `GCController`. Record the answer in the PR; nothing depends on it.
+- [ ] **Step 8: Idle soak** — leave a relayed controller connected in `testcontroller` for >10 minutes without input; it must stay connected (relay is exempt from the idle sweep).
+- [ ] **Step 9: GameController claim check** — with relay active, run `Tools/GameControllerProbe.swift` and note whether macOS claims the raw NS2 VID/PID as a `GCController`. Record the answer in the PR; nothing depends on it.
 
 ---
 

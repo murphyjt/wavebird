@@ -90,6 +90,7 @@ Three SwiftUI scenes in `WaveBirdApp.body`:
 - Set-report `data` from CoreHID includes the report ID at index 0 (the `VirtualHIDDevice.SetReportHandler` doc comment says so; every parser in `HID/` indexes accordingly). Relay rewrites byte 0 to `0x00` for rumble and drops it for tunnel frames.
 - Relay descriptors for GC/Joy-Con carry a Generic Desktop / Game Pad outer collection because SDL's only-controllers filter rejects bare vendor-page devices.
 - Stays DEBUG-only until a released SDL carries `SDL_HID_API_BUS_VIRTUAL`.
+- The merged Joy-Con pair never relays (solo controllers only). `HIDOutputCatalog.pairExcludedModeIDs` guards it at four sites — `formJoyConPair` and the chokepoint in `activateJoyConPair` (`Bridge/BridgeCoordinator+JoyConPair.swift`), `ProfilePickerSheet`, and `ControllerDetailSheet` — and it's load-bearing: the pair dispatch calls `buildReport` unconditionally and `NS2RelayOutput.buildReport` returns empty `Data()`, so a relayed pair would be a silent dead pad.
 
 ## Input config
 
@@ -100,7 +101,7 @@ Three SwiftUI scenes in `WaveBirdApp.body`:
 ## Sleep, idle & updates
 
 - On `NSWorkspace.willSleepNotification` the coordinator clean-disconnects every controller and stops scanning (`prepareForSleep`); `didWake` restarts scanning so paired controllers reconnect on the next button press. Best-effort — the OS tears BLE down regardless. Closed-lid clamshell with an external display keeps the Mac awake, so `willSleep` never fires there and controllers stay connected.
-- Idle timeout: a once-a-minute sweep (`runIdleSweep`, started from `start()`) disconnects any `.ready` controller with no input change for `WaveBird.idleDisconnectMinutes` (default 10, `0` = off). Timestamps come from `ActivityTracker` — a `Sendable` unfair-lock dictionary written by the off-main dispatch tasks (captured by value, matching the settings-snapshot pattern) and read on main; `ContinuousClock` so it's immune to sleep/wall-clock skew.
+- Idle timeout: a once-a-minute sweep (`runIdleSweep`, started from `start()`) disconnects any `.ready` controller with no input change for `WaveBird.idleDisconnectMinutes` (default 10, `0` = off). Timestamps come from `ActivityTracker` — a `Sendable` unfair-lock dictionary written by the off-main dispatch tasks (captured by value, matching the settings-snapshot pattern) and read on main; `ContinuousClock` so it's immune to sleep/wall-clock skew. Relay controllers are exempt from the idle sweep (`activityTracker.remove` on the raw-forwarding path, since relay can't detect input changes to touch on).
 - `UpdateChecker` (`WaveBird/UpdateChecker.swift`) is a manual + daily-background check against GitHub `releases/latest` — deliberately not Sparkle (no appcast/signing keys; see the shelved-Sparkle memory if silent auto-install is ever wanted). Background checks are `#if !DEBUG` (debug builds are versioned `0.0.0-dev`, which every release outranks). "Skip This Version" persists to `WaveBird.skippedUpdateVersion` and only silences background checks; a manual check always shows what's available. The sheet is a plain `NSWindow` held in a static (not a SwiftUI scene).
 
 ## Concurrency

@@ -10,6 +10,10 @@ import Foundation
 // alone doesn't serialise the awaited transport call — each send chains on
 // the previous one's task instead. The chained task is unstructured on
 // purpose: a cancelled caller must not abandon a BLE command mid-flight.
+//
+// `timeout` bounds only the transport wait for that command; time spent
+// queued behind earlier sends is additional, so total `send` latency can be
+// queue time plus timeout.
 actor CommandTunnel {
     private let transport: any Transport
     private let deviceID: DeviceID

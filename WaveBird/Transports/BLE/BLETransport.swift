@@ -29,11 +29,11 @@ actor BLETransport: Transport {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var matcherByDevice: [UUID: BLEMatcher] = [:]
     private var inputChars: [UUID: CBCharacteristic] = [:]
-    // Per-peripheral additional input chars → their HID report ID. Used by
-    // an output mode to forward extra Nintendo input reports (e.g. Pro's
-    // Report 0x09 on handle 0x000E) verbatim under the right report ID. Populated
-    // at characteristic discovery so notifications can be tagged, but NOT
-    // subscribed there — secondaries are opt-in per output mode (setSecondaryInputs).
+    // Per-peripheral additional input chars → their HID report ID. The catalog
+    // of available secondary channels (e.g. Pro's Report 0x09 on handle 0x000E),
+    // populated at characteristic discovery so notifications can be tagged, but
+    // NOT subscribed there — secondaries are opt-in per output mode
+    // (setSecondaryInputs); none of the current modes subscribes one.
     private var secondaryInputs: [UUID: [CBUUID: UInt8]] = [:]
     // Per-peripheral report ID → its discovered secondary characteristic, so a
     // later setSecondaryInputs can toggle notifications without re-discovering.
@@ -346,8 +346,8 @@ actor BLETransport: Transport {
 
         // Cache any secondary input characteristics (e.g. Pro's Report 0x09) and
         // their HID report IDs, but DON'T subscribe — secondaries are opt-in per
-        // output mode. setSecondaryInputs flips notifications on once the
-        // coordinator resolves a mode that consumes them (an output mode).
+        // output mode, and none of the current modes subscribes one.
+        // setSecondaryInputs flips notifications on if a future mode ever does.
         var extras: [CBUUID: UInt8] = [:]
         var extraChars: [UInt8: CBCharacteristic] = [:]
         for extra in m.secondaryInputs {

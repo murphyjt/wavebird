@@ -239,8 +239,8 @@ design)`) and superseded; do not reapply it.
   USB calls both; a new `InitVirtual` calls only `InitController`.
 - Rename `SendBulkData` → `SendCommand`, `RecvBulkData` → `RecvResponse`.
   - USB: unchanged bodies.
-  - Virtual `SendCommand`: copy into a 64-byte buffer with `[0] = 0x80`,
-    `SDL_hid_write`. Returns `size` on success.
+  - Virtual `SendCommand`: copy into a 65-byte buffer with `[0] = 0x80` plus
+    64 payload bytes, `SDL_hid_write`. Returns `size` on success.
   - Virtual `RecvResponse`: loop `SDL_hid_read_timeout(dev, buf, 81, remaining)`
     until `buf[0] == 0x81` or 2000 ms elapse; copy `buf + 1` into `data`
     (up to `size`) and return the count; other reports (state 0x05) are

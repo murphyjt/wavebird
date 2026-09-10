@@ -39,7 +39,6 @@ enum NS2Pairing {
     private static let stepTimeout: Duration = .milliseconds(500)
 
     static func run(
-        deviceID: DeviceID,
         tunnel: CommandTunnel,
         hostAddress: Data
     ) async throws -> NS2PairingResult {

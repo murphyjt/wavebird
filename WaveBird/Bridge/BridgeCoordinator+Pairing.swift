@@ -69,7 +69,6 @@ extension BridgeCoordinator {
         pairingPrompt?.status = .inProgress
         do {
             _ = try await NS2Pairing.run(
-                deviceID: prompt.deviceID,
                 tunnel: tunnel,
                 hostAddress: prompt.hostAddress
             )
