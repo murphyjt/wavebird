@@ -6,8 +6,9 @@ final class VirtualHIDDevice: Sendable {
     private let delegate: Delegate
 
     // Called for every Set Report request the host sends to the virtual device.
-    // `data` is the report payload (excluding the leading ID byte; the parsed
-    // ID is passed separately). The handler may dispatch a corresponding Input
+    // `data` is the on-wire frame including the report ID at index 0 (the
+    // parsed ID is also passed separately) — every parser in HID/ indexes
+    // from 1. The handler may dispatch a corresponding Input
     // Report back via the `device` argument — that's how the Switch Pro presentation
     // services the subcommand handshake.
     typealias SetReportHandler = @Sendable (HIDVirtualDevice, HIDReportType, HIDReportID?, Data) async -> Void
