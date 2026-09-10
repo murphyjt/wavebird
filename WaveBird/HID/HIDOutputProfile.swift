@@ -84,7 +84,8 @@ protocol HIDOutputProfile: Sendable {
     // HID report IDs this presentation needs from the controller's optional
     // secondary input channels (a subset of BLEMatcher.secondaryInputs). The
     // coordinator asks the transport to subscribe exactly these when the mode
-    // activates. Default empty — only ns2Passthrough consumes Pro's Report 0x09.
+    // activates. Default empty — no shipping or DEBUG presentation consumes one
+    // today; ns2Relay explicitly must not (Report 0x09 suppresses 0x05).
     // Reports the gameplay/SDL paths use (the shared 0x05) are not secondaries
     // and are always subscribed.
     var requiredSecondaryReportIDs: Set<UInt8> { get }
@@ -133,7 +134,7 @@ protocol HIDOutputSession: Sendable {
     // or a stop frame cancels the loop.
     var refreshInterval: Duration? { get }
 
-    // Raw transport-report forwarding hook for passthrough modes. Returning
+    // Raw transport-report forwarding hook for the relay mode. Returning
     // non-nil dispatches the bytes verbatim to the VHID and SKIPS the
     // state-translation pipeline for that report. reportID is the source
     // report ID — nil for the BLE shared input (Report 0x05, unprefixed on
@@ -144,10 +145,16 @@ protocol HIDOutputSession: Sendable {
 
     // Raw transport vibration payload, derived from a host Set Report. Returning
     // non-nil bypasses parseRumble → profile.encodeRumble and is sent verbatim
-    // via transport.sendVibration. Used by ns2Passthrough to relay Nintendo's
-    // native Output Report 0x02 to the BLE vibration channel without
-    // round-tripping through the lossy RumbleCommand model.
+    // via transport.sendVibration. Used by ns2Relay to forward Nintendo's
+    // native rumble Output Report (0x01/0x02/0x03) to the BLE vibration channel
+    // without round-tripping through the lossy RumbleCommand model.
     func rawVibrationPayload(type: HIDReportType, id: HIDReportID?, data: Data) -> Data?
+
+    // Command-tunnel hook for the NS2 relay mode. Returning non-nil hands the
+    // coordinator a BLE command frame to send through the device's
+    // CommandTunnel; the response (if any) is dispatched back as Input Report
+    // 0x81. Default nil — no other presentation tunnels commands.
+    func relayCommand(type: HIDReportType, id: HIDReportID?, data: Data) -> Data?
 }
 
 extension HIDOutputSession {
@@ -159,6 +166,7 @@ extension HIDOutputSession {
     var refreshInterval: Duration? { nil }
     func transformRawReport(reportID: UInt8?, data: Data) -> Data? { nil }
     func rawVibrationPayload(type: HIDReportType, id: HIDReportID?, data: Data) -> Data? { nil }
+    func relayCommand(type: HIDReportType, id: HIDReportID?, data: Data) -> Data? { nil }
 }
 
 // MARK: - NS2 raw passthrough
