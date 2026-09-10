@@ -98,24 +98,57 @@ final class VirtualHIDDevice: Sendable {
 }
 
 extension VirtualHIDDevice {
-    // Vendor passthrough descriptor: single input report, report ID `reportID`,
-    // `byteCount` unsigned bytes, usage page 0xFF00. Used for ns2Passthrough mode.
-    static func ns2VendorDescriptor(reportID: UInt8, byteCount: Int) -> Data {
-        Data([
-            0x06, 0x00, 0xFF,        // Usage Page (Vendor 0xFF00)
-            0x09, 0x01,              // Usage (Vendor 0x01)
+    // Tunnel reports for the NS2 relay mode (spec: docs/superpowers/specs/
+    // 2026-09-10-ns2-relay-design.md §"The HID contract"). Appended inside a
+    // Game Pad application collection; sets its own usage page so it is
+    // independent of whatever page precedes it.
+    //   0x80 Output, 64 bytes — command request frame (SDL → controller)
+    //   0x81 Input,  80 bytes — command response frame (controller → SDL)
+    static let ns2TunnelDescriptorBlock: Data = Data([
+        0x06, 0x00, 0xFF,        // Usage Page (Vendor 0xFF00)
+        0x85, 0x80,              // Report ID (0x80)
+        0x09, 0x03,              // Usage (Vendor 0x03 — command request)
+        0x15, 0x00,              // Logical Minimum (0)
+        0x26, 0xFF, 0x00,        // Logical Maximum (255)
+        0x75, 0x08,              // Report Size (8)
+        0x95, 0x40,              // Report Count (64)
+        0x91, 0x02,              // Output (Data, Var, Abs)
+        0x85, 0x81,              // Report ID (0x81)
+        0x09, 0x04,              // Usage (Vendor 0x04 — command response)
+        0x95, 0x50,              // Report Count (80)
+        0x81, 0x02,              // Input (Data, Var, Abs)
+    ])
+
+    // Relay descriptor for controllers whose real USB descriptor we don't
+    // carry (GC, Joy-Con). The Generic Desktop / Game Pad outer collection is
+    // load-bearing: SDL's HIDAPI_IGNORE_DEVICE drops any device whose top-level
+    // usage isn't Joystick/Game Pad/Multi-axis when
+    // SDL_HINT_HIDAPI_ENUMERATE_ONLY_CONTROLLERS is on (the default).
+    //   0x05 Input,  63 bytes — controller state (BLE Report 0x05 verbatim)
+    //   rumbleOutputReportID Output, 63 bytes — native rumble packet
+    //   + ns2TunnelDescriptorBlock
+    static func ns2RelayDescriptor(rumbleOutputReportID: UInt8) -> Data {
+        var d = Data([
+            0x05, 0x01,              // Usage Page (Generic Desktop)
+            0x09, 0x05,              // Usage (Game Pad)
             0xA1, 0x01,              // Collection (Application)
-            0x85, reportID,          //   Report ID
-            0x09, 0x01,              //   Usage (Vendor)
+            0x06, 0x00, 0xFF,        //   Usage Page (Vendor 0xFF00)
+            0x85, 0x05,              //   Report ID (5)
+            0x09, 0x01,              //   Usage (Vendor 0x01 — state)
             0x15, 0x00,              //   Logical Minimum (0)
             0x26, 0xFF, 0x00,        //   Logical Maximum (255)
             0x75, 0x08,              //   Report Size (8)
-            0x95, UInt8(byteCount),  //   Report Count
+            0x95, 0x3F,              //   Report Count (63)
             0x81, 0x02,              //   Input (Data, Var, Abs)
-            0xC0,                    // End Collection
+            0x85, rumbleOutputReportID, // Report ID (rumble)
+            0x09, 0x02,              //   Usage (Vendor 0x02 — rumble)
+            0x95, 0x3F,              //   Report Count (63)
+            0x91, 0x02,              //   Output (Data, Var, Abs)
         ])
+        d.append(ns2TunnelDescriptorBlock)
+        d.append(0xC0)               // End Collection
+        return d
     }
-
 }
 
 extension VirtualHIDDevice {

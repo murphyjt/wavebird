@@ -177,7 +177,7 @@ struct NS2PassthroughOutput: HIDOutputProfile, HIDOutputSession {
     var productName: String { profile.name }
     var manufacturer: String? { "Nintendo" }
     var versionNumber: UInt16 { 0x0001 }
-    var descriptor: Data    { profile.vendorPassthroughDescriptor }
+    var descriptor: Data    { profile.relayDescriptor }
 
     // Passthrough forwards Pro's Report 0x09 (handle 0x000E) verbatim alongside
     // the shared 0x05, so it needs that secondary channel subscribed.

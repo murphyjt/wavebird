@@ -26,9 +26,10 @@ protocol ControllerProfile: Sendable {
     // wins. nil = no controller-side requirement (use the session's value).
     var rumbleRefreshInterval: Duration? { get }
 
-    // Vendor passthrough descriptor: declares a single vendor input report
-    // (usage page 0xFF00, report ID 0x05, 63 bytes) for ns2Passthrough mode.
-    var vendorPassthroughDescriptor: Data { get }
+    // HID descriptor the ns2Relay output mode publishes for this controller:
+    // the real NS2 report set (state in, native rumble out) plus the 0x80/0x81
+    // command tunnel. See VirtualHIDDevice.ns2RelayDescriptor.
+    var relayDescriptor: Data { get }
 
     // Parse a BLE command response into structured device metadata. The
     // default implementation handles the addresses common to every NS2

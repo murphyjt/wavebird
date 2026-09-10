@@ -66,7 +66,8 @@ struct GameCubeProfile: ControllerProfile {
     let hidVendorID: UInt16 = 0x057E
     let hidProductID: UInt16 = 0x2073
 
-    var vendorPassthroughDescriptor: Data { VirtualHIDDevice.ns2VendorDescriptor(reportID: 0x05, byteCount: 63) }
+    // Native rumble is Output Report 0x03 (see encodeRumble below).
+    var relayDescriptor: Data { VirtualHIDDevice.ns2RelayDescriptor(rumbleOutputReportID: 0x03) }
 
     // NS2 GC Output Report 0x03 (42 bytes, BLE handle 0x0012):
     //   byte[0]  = 0x00 (Report ID for BT)

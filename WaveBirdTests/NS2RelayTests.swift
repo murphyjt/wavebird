@@ -58,3 +58,72 @@ struct CommandTunnelTests {
         for (cmd, echoed) in results { #expect(echoed == cmd) }
     }
 }
+
+// Count non-overlapping occurrences of `pattern` in `data`.
+func occurrences(of pattern: Data, in data: Data) -> Int {
+    guard !pattern.isEmpty, data.count >= pattern.count else { return 0 }
+    var count = 0
+    var i = data.startIndex
+    while i <= data.endIndex - pattern.count {
+        if data[i..<(i + pattern.count)].elementsEqual(pattern) {
+            count += 1
+            i += pattern.count
+        } else {
+            i += 1
+        }
+    }
+    return count
+}
+
+struct NS2RelayDescriptorTests {
+
+    // Report ID 0x80 declared as a 64-byte Output; 0x81 as an 80-byte Input.
+    private let tunnelOut = Data([0x85, 0x80, 0x09, 0x03, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x40, 0x91, 0x02])
+    private let tunnelIn  = Data([0x85, 0x81, 0x09, 0x04, 0x95, 0x50, 0x81, 0x02])
+    private let gamePadHeader = Data([0x05, 0x01, 0x09, 0x05, 0xA1, 0x01])
+
+    @Test func tunnelBlockIsOnTheVendorPageAndDeclaresBothReports() {
+        let block = VirtualHIDDevice.ns2TunnelDescriptorBlock
+        #expect(block.prefix(3) == Data([0x06, 0x00, 0xFF]))  // Usage Page 0xFF00
+        #expect(occurrences(of: tunnelOut, in: block) == 1)
+        #expect(occurrences(of: tunnelIn, in: block) == 1)
+    }
+
+    @Test func proDescriptorIsRealUSBShapePlusOneTunnelBlock() {
+        let d = ProControllerProfile().relayDescriptor
+        #expect(d.prefix(6) == gamePadHeader)
+        #expect(d.last == 0xC0)
+        #expect(occurrences(of: VirtualHIDDevice.ns2TunnelDescriptorBlock, in: d) == 1)
+        // Real Pro report set: 0x05 in, 0x09 in, 0x02 out — each declared once.
+        #expect(occurrences(of: Data([0x85, 0x05]), in: d) == 1)
+        #expect(occurrences(of: Data([0x85, 0x09]), in: d) == 1)
+        #expect(occurrences(of: Data([0x85, 0x02, 0x09, 0x01, 0x95, 0x3F, 0x91, 0x02]), in: d) == 1)
+        // The tunnel block sits inside the application collection.
+        #expect(d.dropLast().suffix(VirtualHIDDevice.ns2TunnelDescriptorBlock.count) == VirtualHIDDevice.ns2TunnelDescriptorBlock)
+    }
+
+    @Test func gameCubeDescriptorDeclaresGamePadInput05Rumble03AndTunnel() {
+        let d = GameCubeProfile().relayDescriptor
+        #expect(d.prefix(6) == gamePadHeader)
+        #expect(d.last == 0xC0)
+        #expect(occurrences(of: Data([0x85, 0x05, 0x09, 0x01, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x3F, 0x81, 0x02]), in: d) == 1)
+        #expect(occurrences(of: Data([0x85, 0x03, 0x09, 0x02, 0x95, 0x3F, 0x91, 0x02]), in: d) == 1)
+        #expect(occurrences(of: VirtualHIDDevice.ns2TunnelDescriptorBlock, in: d) == 1)
+    }
+
+    @Test func joyConDescriptorsDeclareRumble01() {
+        for side in [JoyConProfile.Side.left, .right] {
+            let d = JoyConProfile(side: side).relayDescriptor
+            #expect(d.prefix(6) == gamePadHeader)
+            #expect(occurrences(of: Data([0x85, 0x01, 0x09, 0x02, 0x95, 0x3F, 0x91, 0x02]), in: d) == 1)
+            #expect(occurrences(of: VirtualHIDDevice.ns2TunnelDescriptorBlock, in: d) == 1)
+        }
+    }
+
+    @Test func relayDescriptorEmbedsTheGivenRumbleID() {
+        let d = VirtualHIDDevice.ns2RelayDescriptor(rumbleOutputReportID: 0x7A)
+        #expect(occurrences(of: Data([0x85, 0x7A, 0x09, 0x02, 0x95, 0x3F, 0x91, 0x02]), in: d) == 1)
+        #expect(occurrences(of: Data([0x85, 0x05]), in: d) == 1)
+        #expect(d.first == 0x05 && d.last == 0xC0)
+    }
+}

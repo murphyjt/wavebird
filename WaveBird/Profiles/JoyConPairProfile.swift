@@ -28,7 +28,9 @@ struct JoyConPairProfile: ControllerProfile {
     let hidVendorID: UInt16 = 0x057E
     let hidProductID: UInt16 = 0x2069
 
-    var vendorPassthroughDescriptor: Data { VirtualHIDDevice.ns2VendorDescriptor(reportID: 0x05, byteCount: 63) }
+    // The merged pair never relays (SDL combines two relayed Joy-Cons itself);
+    // this only satisfies the protocol requirement.
+    var relayDescriptor: Data { VirtualHIDDevice.ns2RelayDescriptor(rumbleOutputReportID: 0x02) }
 
     func parseBLEReport(_ data: Data, calibration: ControllerCalibration) -> ControllerState? { nil }
     func parseUSBReport(_ data: Data, reportID: UInt8, calibration: ControllerCalibration) -> ControllerState? { nil }

@@ -73,7 +73,8 @@ struct JoyConProfile: ControllerProfile {
         }
     }
 
-    var vendorPassthroughDescriptor: Data { VirtualHIDDevice.ns2VendorDescriptor(reportID: 0x05, byteCount: 63) }
+    // Native rumble is Output Report 0x01 for both sides (JoyConSharedRumble).
+    var relayDescriptor: Data { VirtualHIDDevice.ns2RelayDescriptor(rumbleOutputReportID: 0x01) }
 
     // Mirror Pro's 15 ms heartbeat for HD rumble continuity.
     var rumbleRefreshInterval: Duration? { .milliseconds(15) }

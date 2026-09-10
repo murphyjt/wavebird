@@ -49,14 +49,19 @@ struct ProControllerProfile: ControllerProfile {
 
     // Verbatim from the physical Switch 2 Pro Controller over USB (extracted via
     // ioreg with the device plugged in). Two input reports + one output:
-    //   Report 5  (in,  63 vendor bytes)               — subcommand / handshake replies
-    //   Report 9  (in,  2 vendor + 21 btn + 4×12b axes + 52 vendor = 63 bytes) — state
-    //   Report 2  (out, 63 vendor bytes)               — host writes (rumble / subcommands)
-    // Used by ns2Passthrough mode so apps that key off the Switch 2 Pro USB
-    // descriptor see the same shape over BLE.
-    var vendorPassthroughDescriptor: Data { Self.usbPassthroughDescriptor }
+    //   Report 5  (in,  63 vendor bytes)               — state (what relay emits)
+    //   Report 9  (in,  2 vendor + 21 btn + 4×12b axes + 52 vendor = 63 bytes) — declared for fidelity, never emitted
+    //   Report 2  (out, 63 vendor bytes)               — native rumble
+    // Relay appends the 0x80/0x81 command tunnel inside the same collection.
+    var relayDescriptor: Data {
+        var d = Self.usbDescriptor
+        d.removeLast()                                   // End Collection
+        d.append(VirtualHIDDevice.ns2TunnelDescriptorBlock)
+        d.append(0xC0)
+        return d
+    }
 
-    private static let usbPassthroughDescriptor: Data = Data([
+    private static let usbDescriptor: Data = Data([
         0x05, 0x01,                       // Usage Page (Generic Desktop)
         0x09, 0x05,                       // Usage (Game Pad)
         0xA1, 0x01,                       // Collection (Application)
