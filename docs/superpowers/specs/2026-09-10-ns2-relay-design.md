@@ -102,8 +102,10 @@ Host output report `0x01` / `0x02` / `0x03` is written to the vibration
 characteristic verbatim with byte 0 rewritten to `0x00` (BLE framing byte,
 not a HID ID). SDL builds these packets in exactly the layout WaveBird's own
 encoders emit (`0x50 | tid` state byte, LRA ops), so no re-encoding. The
-existing 42-byte Pro relay in passthrough generalises to all three IDs; Joy-Con
-and GC packet lengths follow the profiles' own encoders.
+existing 42-byte Pro relay in passthrough generalises to all three IDs. The
+relayed length for each ID equals the byte count that profile's `encodeRumble`
+produces today (42 for Pro and GC), so the BLE write is the same size the
+controller already accepts from WaveBird.
 
 Host-driven cadence: any in-flight `RumbleRefreshBox` loop is cancelled, as
 passthrough does today. The 1 s stop watchdog stays.
@@ -113,10 +115,10 @@ passthrough does today. The 1 s stop watchdog stays.
 - SDL writes output report `0x80` carrying a command frame exactly as it would
   send over bulk: `[cmd, 0x91, transport, subcmd, 0x00, len, 0x00, 0x00,
   payload...]`, padded to 64 bytes.
-- The bridge takes `payload[8 + len]` bytes (or the whole frame if `len` is
-  unreliable — decide at implementation time against a hexdump of SDL's
-  frames), rewrites byte 2 from `0x00` (USB) to `0x01` (Bluetooth), and sends it
-  to the command characteristic `0x0014` awaiting a response on `0x001A`.
+- The bridge takes the first `8 + len` bytes (SDL itself sends exactly
+  `init_sequence[i][5] + 8` bytes over bulk; the rest of the report is zero
+  padding), rewrites byte 2 from `0x00` (USB) to `0x01` (Bluetooth), and sends
+  it to the command characteristic `0x0014` awaiting a response on `0x001A`.
   `0x01` is the value every hardware-validated WaveBird frame uses; we do not
   test whether the controller accepts `0x00` over BLE.
 - The response frame is dispatched as input report `0x81`: `[0x81] + frame`,
@@ -283,10 +285,3 @@ Hardware pass (required; none of this is verifiable without controllers):
 - Whether macOS GameController claims a raw NS2 VID/PID on this OS build
   (`GCController.supportsHIDDevice`). If it does, note it; nothing in this
   design depends on the answer, but it changes what other apps see.
-
-## Open items settled at implementation time
-
-- Whether the bridge trims the 0x80 frame by `len` or forwards all 64 bytes.
-  Pick by hexdumping SDL's frames on the wire; both are byte-preserving.
-- Exact zero-padding lengths for Joy-Con and GC rumble relays (take them from
-  the profiles' own encoders).
