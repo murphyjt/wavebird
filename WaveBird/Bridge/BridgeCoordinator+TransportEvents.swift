@@ -282,6 +282,11 @@ extension BridgeCoordinator {
             if let session = record.session,
                let vhid = record.virtualHID,
                let raw = session.transformRawReport(reportID: reportID, data: data) {
+                // Relay never parses state, so it can't detect input changes; the
+                // controller streams Report 0x05 at ~70 Hz regardless of input, so
+                // touching on every report would silently disable the idle sweep
+                // while pretending not to. SDL owns the session — opt out instead.
+                activityTracker.remove(id)
                 Task {
                     do {
                         try await vhid.dispatch(raw)
