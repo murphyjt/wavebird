@@ -59,15 +59,18 @@ extension BridgeCoordinator {
 
     func acceptPairing() async {
         guard let prompt = pairingPrompt else { return }
-        guard let transport = transport(for: prompt.deviceID.transport) else {
-            pairingPrompt?.status = .failed("transport unavailable")
+        // The tunnel exists from .ready to .disconnected; a prompt can only
+        // be accepted while the controller is connected, so its absence means
+        // the link dropped under the sheet.
+        guard let tunnel = devices[prompt.deviceID]?.commandTunnel else {
+            pairingPrompt?.status = .failed("controller disconnected")
             return
         }
         pairingPrompt?.status = .inProgress
         do {
             _ = try await NS2Pairing.run(
                 deviceID: prompt.deviceID,
-                transport: transport,
+                tunnel: tunnel,
                 hostAddress: prompt.hostAddress
             )
             if let record = devices[prompt.deviceID] { recordController(for: record, isPaired: true) }

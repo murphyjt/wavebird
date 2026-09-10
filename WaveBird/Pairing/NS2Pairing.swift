@@ -25,7 +25,7 @@ enum NS2PairingError: Error, CustomStringConvertible {
     }
 }
 
-// Runs the four pairing subcommands in order over a Transport. Caller is
+// Runs the four pairing subcommands in order over a CommandTunnel. Caller is
 // responsible for ensuring the device is in a state where command/response is
 // active (i.e. post-`.ready`). The flow does not subscribe to anything new and
 // does not change connection state; on success the controller's flash now
@@ -40,7 +40,7 @@ enum NS2Pairing {
 
     static func run(
         deviceID: DeviceID,
-        transport: any Transport,
+        tunnel: CommandTunnel,
         hostAddress: Data
     ) async throws -> NS2PairingResult {
         precondition(hostAddress.count == 6)
@@ -53,8 +53,7 @@ enum NS2Pairing {
         try await sendStep(
             "exchange addresses",
             frame: NS2PairingFrames.exchangeAddresses(primary: hostAddress, secondary: secondary),
-            deviceID: deviceID,
-            transport: transport,
+            tunnel: tunnel,
             minBodyLen: 0
         )
 
@@ -63,8 +62,7 @@ enum NS2Pairing {
         let r2 = try await sendStep(
             "exchange keys",
             frame: NS2PairingFrames.exchangeKeys(hostKey: a1),
-            deviceID: deviceID,
-            transport: transport,
+            tunnel: tunnel,
             minBodyLen: 1 + 16
         )
         // Body layout: [0x01 status, B1_reversed[16]].
@@ -77,8 +75,7 @@ enum NS2Pairing {
         let r3 = try await sendStep(
             "confirm LTK",
             frame: NS2PairingFrames.confirmLTK(challenge: a2),
-            deviceID: deviceID,
-            transport: transport,
+            tunnel: tunnel,
             minBodyLen: 1 + 16
         )
         let b2Wire = Data(r3.dropFirst(1).prefix(16))
@@ -96,8 +93,7 @@ enum NS2Pairing {
         _ = try await sendStep(
             "finalise",
             frame: NS2PairingFrames.finalise,
-            deviceID: deviceID,
-            transport: transport,
+            tunnel: tunnel,
             minBodyLen: 0
         )
 
@@ -110,11 +106,10 @@ enum NS2Pairing {
     private static func sendStep(
         _ name: String,
         frame: Data,
-        deviceID: DeviceID,
-        transport: any Transport,
+        tunnel: CommandTunnel,
         minBodyLen: Int
     ) async throws -> Data {
-        let resp = try await transport.sendAwaitingResponse(frame, to: deviceID, timeout: stepTimeout)
+        let resp = try await tunnel.send(frame, timeout: stepTimeout)
         guard let resp else { throw NS2PairingError.stepTimedOut(step: name) }
         let body = resp.data.dropFirst(ackHeaderLen)
         guard body.count >= minBodyLen else {
