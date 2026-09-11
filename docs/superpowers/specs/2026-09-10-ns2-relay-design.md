@@ -61,7 +61,7 @@ virtual transport so a bridge on another OS (e.g. Linux uhid) can follow it.
 
 | Field | Value |
 |---|---|
-| VID / PID | the controller's real NS2 identity (`0x057E` / `0x2069` Pro, `0x2073` GC, `0x2066` L, `0x2067` R) |
+| VID / PID | the controller's real NS2 identity (`0x057E` / `0x2069` Pro, `0x2073` GC, `0x2067` Joy-Con L, `0x2066` Joy-Con R — per SDL's `usb_ids.h`) |
 | Product / Manufacturer | real strings |
 | Transport | `Virtual` (what CoreHID publishes; SDL maps it to `SDL_HID_API_BUS_VIRTUAL`) |
 | HID serial | WaveBird's existing `hidSerialNumber(deviceSerial:modeID:)` scoping |

@@ -15,7 +15,7 @@
 - Repository: `/Users/joshua/Developer/SDL`, branch off `main` at `04b2fb804`. **Do not** `git stash pop` the stash named "wavebird is_virtual patch (pre-relay design)" — it is superseded.
 - Work on a branch: `git switch -c switch2-virtual-transport`.
 - Enum value: `SDL_HID_API_BUS_VIRTUAL = 0x05` and `HID_API_BUS_VIRTUAL = 0x05` are **placeholders** until the SDL maintainer picks a value in the upstream issue. Both must stay equal to each other.
-- Windows is out of scope (no virtual-bus signal in its hidapi). Don't touch `src/hidapi/windows/`.
+- Windows has no virtual-bus signal in its hidapi, so no detection is added there — but the enum addition still needs `case HID_API_BUS_VIRTUAL:` in `src/hidapi/windows/hid.c`'s `-Wswitch` suppression group (upstream CI builds Windows with `-Werror`).
 - USB path bodies of `SendCommand`/`RecvResponse` (renamed from `SendBulkData`/`RecvBulkData`) are unchanged byte-for-byte. `UpdateDevice`'s USB behaviour is unchanged: the `0x81` skip is virtual-only.
 - Contract numbers (copied from the spec; every one appears in the header comment):
   - Request: Output Report `0x80`, 64 payload bytes → `hid_write` buffer is 65 bytes (`[0x80] + 64`).
@@ -35,6 +35,8 @@
 - Modify: `src/hidapi/linux/hid.c` — admit and map `BUS_VIRTUAL`.
 - Modify: `src/joystick/hidapi/SDL_hidapijoystick_c.h` — `bool is_virtual`.
 - Modify: `src/joystick/hidapi/SDL_hidapijoystick.c` — set `is_virtual`; propagate to the combined Joy-Con device.
+- Modify: `src/hidapi/SDL_hidapi.c` — exempt `HID_API_BUS_VIRTUAL` from the libusb-only whitelist in `SDL_HIDAPI_ShouldIgnoreDevice` (all four NS2 PIDs are on it; without this the bridge device is dropped at enumeration).
+- Modify: `src/hidapi/windows/hid.c` — the one `case` label above.
 - Modify: `src/joystick/hidapi/SDL_hidapi_switch2.c` — the driver changes.
 
 ---
@@ -622,3 +624,19 @@ Requires WaveBird built in Debug with the relay plan's Tasks 1–6 applied and "
 **Placeholder scan.** The one "…" in Task 2 Step 3 is an explicit instruction to move lines 392–506 verbatim (with the exact line range and the two textual differences named), not an omission. Everything else is complete code.
 
 **Type consistency.** `SendCommand`/`RecvResponse` signatures match the old helpers so all ten call sites compile after a textual rename. `SWITCH2_VIRTUAL_RESPONSE_REPORT_ID` is defined in Step 1 and used in Step 6. `HIDAPI_DriverSwitch2_InitController` is defined in Step 3 and called from Step 3 (`InitUSB`) and Step 4 (`InitVirtual`). `is_virtual` is set in Task 1 and read in Task 2 Steps 1, 5, 6.
+
+---
+
+## Post-execution amendments (2026-09-10/11)
+
+Implemented on SDL branch `switch2-virtual-transport` (commits `320ab9a27`, `d5ca73233`). Deviations from the text above, all from the whole-branch review or the hardware pass:
+
+- Two files the plan never listed were required: the libusb whitelist exemption in `src/hidapi/SDL_hidapi.c` and the Windows `-Wswitch` case (now in File Structure and Global Constraints).
+- Task 2 Step 1's `return SDL_SetError(...)` in `int SendCommand` returned 0 (success); it is `SDL_SetError(...); return -1;`.
+- Virtual `RecvResponse` matches replies to the in-flight command by cmd ID (`report[1]`) and subcmd (`report[4]`), recorded on the context in `SendCommand`; the header's timing rule says the driver ignores non-matching replies.
+- On the virtual path the first `RecvResponse` timeout in `ReadFlashBlock` or the init loop fails init. Parked: `InitController`'s flash-read callers only warn and continue, so a silent bridge still stalls ~16 s; one early return per call site remains to do before the upstream PR.
+- `UpdateDevice` on the virtual path keeps only report `0x05` (allowlist) instead of skipping only `0x81`.
+- Header rumble line: byte 0 becomes the `0x00` framing byte and the frame is trimmed to 42 bytes; not "verbatim".
+- The five `SWITCH2_VIRTUAL_*` defines sit with the file's other defines near the top.
+- Hardware (Task 3 Steps 1–5) passed 2026-09-11 on Pro, GameCube, and Joy-Con L/R via WaveBird `Tools/ns2_relay_probe.c`. The first attempt exposed a WaveBird-side deadlock (relay handler awaiting `dispatchInputReport` inside the CoreHID delegate), fixed in WaveBird `1ef3f94`. Steps 6–8 (GameController claim note, upstream issue, PR) remain.
+
