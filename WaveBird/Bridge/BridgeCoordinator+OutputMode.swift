@@ -325,11 +325,15 @@ extension BridgeCoordinator {
 
     func hidTransport(for record: DeviceRecord) -> HIDDeviceTransport {
         // Always .virtual. CoreHID publishes Transport = "Virtual" for every
-        // HIDVirtualDevice regardless of this property (ioreg shows no other
-        // transport key), so clients — SDL included — can't be told USB or
-        // Bluetooth this way. .bluetoothLowEnergy additionally trips
-        // kIOReturnNoPower (IOServiceOpen: 0xe00002e2) on devices with output
-        // reports. Independent of the real controller's link.
+        // HIDVirtualDevice regardless of this property: verified 2026-09-11
+        // (macOS 27) by publishing the same relay device as .virtual, .usb,
+        // and .bluetoothLowEnergy — identical IORegistry key sets, Transport
+        // "Virtual", VendorIDSource 0, LocationID 0 in all three, and SDL's
+        // hidapi backend (which reads only kIOHIDTransportKey) saw VIRTUAL
+        // each time. Clients can't be told USB or Bluetooth this way. An
+        // earlier build saw kIOReturnNoPower (IOServiceOpen: 0xe00002e2) with
+        // .bluetoothLowEnergy; that did not reproduce. Independent of the
+        // real controller's link.
         return .virtual
     }
 
