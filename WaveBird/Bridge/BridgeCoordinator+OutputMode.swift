@@ -324,9 +324,12 @@ extension BridgeCoordinator {
     }
 
     func hidTransport(for record: DeviceRecord) -> HIDDeviceTransport {
-        // Always use .usb — BLE-transport virtual devices with output reports trigger
-        // kIOReturnNoPower (IOServiceOpen:0xe00002e2). The transport hint is independent
-        // of the real controller's connection and has no effect on input delivery.
+        // Always .virtual. CoreHID publishes Transport = "Virtual" for every
+        // HIDVirtualDevice regardless of this property (ioreg shows no other
+        // transport key), so clients — SDL included — can't be told USB or
+        // Bluetooth this way. .bluetoothLowEnergy additionally trips
+        // kIOReturnNoPower (IOServiceOpen: 0xe00002e2) on devices with output
+        // reports. Independent of the real controller's link.
         return .virtual
     }
 
