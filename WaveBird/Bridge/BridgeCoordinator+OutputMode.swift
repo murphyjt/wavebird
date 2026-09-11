@@ -330,7 +330,10 @@ extension BridgeCoordinator {
         // and .bluetoothLowEnergy — identical IORegistry key sets, Transport
         // "Virtual", VendorIDSource 0, LocationID 0 in all three, and SDL's
         // hidapi backend (which reads only kIOHIDTransportKey) saw VIRTUAL
-        // each time. Clients can't be told USB or Bluetooth this way. An
+        // each time. Passing the raw key via `extraProperties:
+        // ["Transport": "USB"]` is overridden the same way, so the stamp is
+        // applied below CoreHID (AppleUserHIDDevice), not by the enum
+        // mapping. Clients can't be told USB or Bluetooth from user space. An
         // earlier build saw kIOReturnNoPower (IOServiceOpen: 0xe00002e2) with
         // .bluetoothLowEnergy; that did not reproduce. Independent of the
         // real controller's link.
