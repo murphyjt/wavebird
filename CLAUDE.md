@@ -131,7 +131,7 @@ Coverage is deliberately narrow: `StickMappingTests` (12-bit stick pipeline rail
 
 The build verifies *code* correctness, not *gamepad* correctness. Anything touching parsing, HID output, or BLE commands needs hardware validation; say so explicitly when you can't test it yourself.
 
-`Tools/` holds standalone diagnostics, not app targets: `Dump.swift` (controller flash dumper; the `.bin` files alongside are captured dumps), `GameControllerProbe.swift` (prints what `GCController` exposes for a connected pad — used to verify the Xbox spoof against real hardware), `RumbleTest.swift`, `trace_transport.swift`, `sw2_sdl_probe.c`. Compile ad hoc with `swiftc`.
+`Tools/` holds standalone diagnostics, not app targets: `Dump.swift` (controller flash dumper; the `.bin` files alongside are captured dumps), `GameControllerProbe.swift` (prints what `GCController` exposes for a connected pad — used to verify the Xbox spoof against real hardware), `RumbleTest.swift`, `trace_transport.swift`, `ns2_relay_probe.c` (walks the relay hardware checklist against the patched SDL in `/Users/joshua/Developer/SDL`; build line in its header). Compile ad hoc with `swiftc` / `clang`.
 
 ## Release
 
