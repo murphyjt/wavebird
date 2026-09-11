@@ -227,12 +227,31 @@ extension BridgeCoordinator {
             // one arrives within the bridge deadline, goes back as Input
             // Report 0x81. No response → nothing is sent; SDL's own 2 s
             // deadline handles it.
+            //
+            // The round trip runs in an unstructured Task, not inline: the
+            // delegate caller awaits this handler, and awaiting
+            // `dispatchInputReport` from inside it re-enters the
+            // HIDVirtualDevice actor and deadlocks (same reason
+            // SwitchProSession dispatches its replies from a Task). The
+            // hang also pins the host's synchronous SetReport until IOKit
+            // times it out (~1 s), which SDL reads as a failed hid_write.
+            // Deadlock observed 2026-09-10; fix verified on a Pro Controller 2026-09-11.
             if let frame = session.relayCommand(type: type, id: id, data: data) {
                 guard let tunnel else { return }
-                // `try?` flattens the throw and the no-response nil into one
-                // optional: either way nothing is dispatched.
-                if let response = try? await tunnel.send(frame, timeout: .seconds(1)) {
+                Task {
+                    let started = ContinuousClock.now
+                    let frameHex = frame.map { String(format: "%02X", $0) }.joined(separator: " ")
+                    stderrLog("[relay] -> tunnel \(frame.count)b [\(frameHex)]")
+                    // `try?` flattens the throw and the no-response nil into
+                    // one optional: either way nothing is dispatched.
+                    guard let response = try? await tunnel.send(frame, timeout: .seconds(1)) else {
+                        stderrLog("[relay] no response after \(ContinuousClock.now - started)")
+                        return
+                    }
+                    let respHex = response.data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                    stderrLog("[relay] <- response \(response.data.count)b after \(ContinuousClock.now - started) [\(respHex)…]")
                     try? await device.dispatchInputReport(data: NS2RelayOutput.tunnelResponseReport(response.data), timestamp: .now)
+                    stderrLog("[relay] 0x81 dispatched after \(ContinuousClock.now - started)")
                 }
                 return
             }
