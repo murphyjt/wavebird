@@ -140,3 +140,24 @@ Hardware checklist:
 Local evidence is retained in `build/nyxi-diagnostics.log`, `build/tests.log`, and
 `build/diagnostics-build.log` (ignored by Git). The test suite also contains the
 published hardware capture so decoder verification is reproducible.
+
+## Full local build without a developer account
+
+```sh
+bash Tools/build-local.sh
+```
+
+This builds the full bridge as `build/Local/Build/Products/Debug/WaveBirdLocal.app`,
+using an ad-hoc signature, a separate bundle identifier and no provisioning
+profile, managed entitlement, App Sandbox or hardened runtime. It does not change
+the shipping target settings or system security settings. `--build-only` skips
+launch. Logs are `build/local-build.log` and `build/local-run.log`.
+
+This route was actually built and launched on this Mac. Both Hyperion halves
+initialized, but `HIDVirtualDevice` creation returned nil. The user enabled
+Accessibility and then received the `vhidCreationFailed` banner (the code selects
+that banner after the post-event access check returns granted). Thus Accessibility
+alone did not make the local build publish a gamepad. A separate ad-hoc probe
+embedding `com.apple.developer.hid.virtual.device` without a matching provisioning
+profile was killed before its first instruction ran (exit 137). Neither local
+signing variant has been demonstrated to provide a usable system gamepad.
