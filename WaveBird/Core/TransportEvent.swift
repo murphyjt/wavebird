@@ -24,6 +24,7 @@ enum TransportEvent: Sendable {
     case discovered(DeviceID, AdvertisementInfo)
     case connecting(DeviceID)
     case connected(DeviceID)
+    case consoleMode(DeviceID, enabled: Bool)
     case ready(DeviceID)
     case disconnected(DeviceID, DisconnectReason)
     case reportReceived(DeviceID, reportID: UInt8?, Data)

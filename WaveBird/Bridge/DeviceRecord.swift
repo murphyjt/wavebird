@@ -23,6 +23,8 @@ struct DeviceRecord: Identifiable {
     var advertisement: AdvertisementInfo
     var connectionState: DeviceConnectionState
     var virtualHID: VirtualHIDDevice?
+    var usesConsoleProtocol = false
+    var commonIdentity: (serial: String?, calibration: ControllerCalibration)? = nil
     var serial: String? = nil
     var firmware: FirmwareInfo? = nil
     var calibration = ControllerCalibration()
@@ -42,6 +44,21 @@ struct DeviceRecord: Identifiable {
     // Pro) return an actor that owns handshake/mode state for this connection.
     var session: (any HIDOutputSession)?
     var awaitingProfileSelection: Bool = false
+
+    mutating func setConsoleProtocol(_ enabled: Bool) {
+        guard enabled != usesConsoleProtocol else { return }
+        if enabled {
+            commonIdentity = (serial, calibration)
+            // Clones can duplicate Nintendo factory serials.
+            serial = "console-\(id.raw.uuidString)"
+            calibration = ControllerCalibration()
+        } else if let identity = commonIdentity {
+            serial = identity.serial
+            calibration = identity.calibration
+            commonIdentity = nil
+        }
+        usesConsoleProtocol = enabled
+    }
 }
 
 // One row in the controllers list. Either a currently-advertising/connected

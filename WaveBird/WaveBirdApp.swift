@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if !NYXI_DIAGNOSTICS
 @main
 struct WaveBirdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -41,3 +42,4 @@ struct WaveBirdApp: App {
         }
     }
 }
+#endif

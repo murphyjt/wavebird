@@ -30,6 +30,13 @@ Early. Currently supports:
 
 Not yet supported: Charging Grip and USB connections.
 
+## Experimental NYXI Hyperion 3
+
+An experimental console-channel fallback supports buttons, sticks and the existing
+Joy-Con L+R merge. See [setup, protocol findings and validation](docs/nyxi-hyperion-3.md).
+For BLE/input testing without Apple's managed virtual-HID entitlement, run
+`bash Tools/nyxi-diagnostics.sh`; this separate monitor does not create a system gamepad.
+
 ## Install
 
 1. Download the latest `WaveBird-<version>.dmg` from the

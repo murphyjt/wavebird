@@ -13,7 +13,8 @@ extension BridgeCoordinator {
     // When the flash read failed (onDeviceHostAddresses still nil at .ready),
     // we fall back to local-only logic.
     func maybePromptForPairing(record: DeviceRecord) {
-        guard pairingPrompt == nil,
+        guard !record.usesConsoleProtocol,
+              pairingPrompt == nil,
               record.id.transport == .ble,
               let serial = record.serial,
               !declinedPairingThisSession.contains(serial),
