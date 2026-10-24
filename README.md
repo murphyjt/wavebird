@@ -33,9 +33,8 @@ Not yet supported: Charging Grip and USB connections.
 ## Experimental NYXI Hyperion 3
 
 An experimental console-channel fallback supports buttons, sticks and the existing
-Joy-Con L+R merge. See [setup, protocol findings and validation](docs/nyxi-hyperion-3.md).
-For BLE/input testing without Apple's managed virtual-HID entitlement, run
-`bash Tools/nyxi-diagnostics.sh`; this separate monitor does not create a system gamepad.
+Joy-Con L+R merge. Hold SYNC on each half to connect. Motion, battery display and
+gameplay rumble are not yet supported for console-channel controllers.
 
 ## Install
 
@@ -134,6 +133,8 @@ or the WebHID / Gamepad APIs (Chrome / Safari gamepad testers like
 
 ## Credits
 
+- [joycon2android](https://github.com/JoeGeC/joycon2android/pull/26) — NYXI
+  Hyperion 3 console-channel protocol and input report reference.
 - [BlueRetro](https://github.com/darthcloud/BlueRetro) by darthcloud — protocol
   reference for Switch 2 controllers (Apache 2.0).
 - [switch2_controller_research](https://github.com/ndeadly/switch2_controller_research)
