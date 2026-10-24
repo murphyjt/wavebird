@@ -30,6 +30,12 @@ Early. Currently supports:
 
 Not yet supported: Charging Grip and USB connections.
 
+## Experimental NYXI Hyperion 3
+
+An experimental console-channel fallback supports buttons, sticks and the existing
+Joy-Con L+R merge. Hold SYNC on each half to connect. Motion, battery display and
+gameplay rumble are not yet supported for console-channel controllers.
+
 ## Install
 
 1. Download the latest `WaveBird-<version>.dmg` from the
@@ -127,6 +133,8 @@ or the WebHID / Gamepad APIs (Chrome / Safari gamepad testers like
 
 ## Credits
 
+- [joycon2android](https://github.com/JoeGeC/joycon2android/pull/26) — NYXI
+  Hyperion 3 console-channel protocol and input report reference.
 - [BlueRetro](https://github.com/darthcloud/BlueRetro) by darthcloud — protocol
   reference for Switch 2 controllers (Apache 2.0).
 - [switch2_controller_research](https://github.com/ndeadly/switch2_controller_research)

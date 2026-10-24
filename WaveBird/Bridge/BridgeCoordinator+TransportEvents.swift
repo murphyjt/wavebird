@@ -150,7 +150,14 @@ extension BridgeCoordinator {
             armConnectingTimeout(id, kind: kind)
 
         case .connected(let id):
+            devices[id]?.setConsoleProtocol(false)
             devices[id]?.connectionState = .connected
+
+        case .consoleMode(let id, let enabled):
+            devices[id]?.setConsoleProtocol(enabled)
+            if enabled {
+                armConnectingTimeout(id, kind: kind, timeout: .seconds(25))
+            }
 
         case .ready(let id):
             devices[id]?.connectionState = .ready
@@ -221,7 +228,8 @@ extension BridgeCoordinator {
                         FileHandle.standardError.write(Data("[ble]   \(line)\n".utf8))
                     }
                 }
-                if let profile = devices[id]?.profile,
+                if devices[id]?.usesConsoleProtocol != true || request.first == 0x10,
+                   let profile = devices[id]?.profile,
                    let meta = profile.handleCommandResponse(request: request, response: response.data) {
                     mergeMetadata(meta, into: id)
                 }
@@ -359,9 +367,8 @@ extension BridgeCoordinator {
         return lines
     }
 
-    func armConnectingTimeout(_ id: DeviceID, kind: TransportKind) {
+    func armConnectingTimeout(_ id: DeviceID, kind: TransportKind, timeout: Duration = BridgeCoordinator.connectingTimeout) {
         connectingTimeoutTasks[id]?.cancel()
-        let timeout = Self.connectingTimeout
         connectingTimeoutTasks[id] = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled, let self else { return }
