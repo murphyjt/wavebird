@@ -59,7 +59,14 @@ struct JoyConProfile: ControllerProfile {
                 NS2Commands.sendVibrationData,
                 NS2Commands.enableFeatures(Self.features),
             ],
-            vibrationCharacteristic: NS2Handle.uuid(0x0012, for: ns2Variant)
+            vibrationCharacteristic: NS2Handle.uuid(0x0012, for: ns2Variant),
+            fallbackOutputCharacteristic: NS2Handle.uuid(NS2Handle.commandWrite, for: ns2Variant),
+            // Report ID 0 plus a silent 16-byte HD rumble slot. Command
+            // starts at 0x11, per the Nintendo combined report layout.
+            fallbackCommandPrefix: Data(repeating: 0, count: 17),
+            consoleFallback: NS2Handle.uuid(NS2Handle.inputReportVariant, for: ns2Variant).map {
+                BLEConsoleFallback(inputCharacteristic: $0, inputReportID: side == .left ? 7 : 8)
+            }
         )
     }
 
@@ -94,6 +101,12 @@ struct JoyConProfile: ControllerProfile {
 
     func parseBLEReport(_ data: Data, calibration: ControllerCalibration) -> ControllerState? {
         NS2Report0x05.decode(data).map { decode($0, calibration: calibration) }
+    }
+
+    func parseBLEReport(_ data: Data, reportID: UInt8?, calibration: ControllerCalibration) -> ControllerState? {
+        guard let reportID else { return parseBLEReport(data, calibration: calibration) }
+        guard reportID == (side == .left ? 7 : 8) else { return nil }
+        return NS2ConsoleReport.decode(data, left: side == .left, calibration: calibration)
     }
 
     func parseUSBReport(_ data: Data, reportID: UInt8, calibration: ControllerCalibration) -> ControllerState? {

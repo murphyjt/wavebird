@@ -7,6 +7,11 @@ enum BLETransportError: Error {
 }
 
 actor BLETransport: Transport {
+    // Ownership-only handoff from the CB delegate to its same-queue actor.
+    // Neither side reads/writes the channel streams; retaining it holds the link.
+    fileprivate struct RetainedChannel: @unchecked Sendable {
+        let value: CBL2CAPChannel
+    }
     nonisolated let kind: TransportKind = .ble
     nonisolated let events: AsyncStream<TransportEvent>
     nonisolated let continuation: AsyncStream<TransportEvent>.Continuation
@@ -42,10 +47,18 @@ actor BLETransport: Transport {
     // requested set so setSecondaryInputs only flips characteristics that change.
     private var subscribedSecondaries: [UUID: Set<UInt8>] = [:]
     private var outputChars: [UUID: CBCharacteristic] = [:]
+    private var commandPrefixes: [UUID: Data] = [:]
+    private var sessionStartChars: [UUID: CBCharacteristic] = [:]
+    private var sessionStartResults: [UUID: Bool] = [:]
+    private var consoleInputs: [UUID: BLEConsoleFallback] = [:]
+    private var consoleReady: Set<UUID> = []
+    private var linkHoldTasks: [UUID: Task<Void, Never>] = [:]
+    private var linkHoldOutstanding: Set<UUID> = []
+    private var linkHoldChannels: [UUID: RetainedChannel] = [:]
     private var vibrationChars: [UUID: CBCharacteristic] = [:]
     // Per device, a map of subscribed response-char UUID → its handle.
     private var responseHandles: [UUID: [CBUUID: UInt16]] = [:]
-    private var pendingResponses: [UUID: (request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
+    private var pendingResponses: [UUID: (token: UUID, request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
     // Single-slot coalescing queue for vibration writes that hit backpressure.
     // CoreBluetooth silently drops writeWithoutResponse calls when the per-peripheral
     // queue is full, so we stash the latest pending payload here and drain it from
@@ -91,8 +104,11 @@ actor BLETransport: Transport {
         let connected = central.retrieveConnectedPeripherals(withServices: services)
         for p in connected {
             peripherals[p.identifier] = p
-            guard let m = matchers.first else { continue }
-            matcherByDevice[p.identifier] = m
+            // A shared service does not identify the product or Joy-Con side.
+            // Only reuse a matcher established from this peripheral's own
+            // manufacturer advertisement; never label every cached device as
+            // the first profile (which can merge/decode the wrong halves).
+            guard let m = matcherByDevice[p.identifier] else { continue }
             let id = DeviceID(transport: .ble, raw: p.identifier)
             let info = AdvertisementInfo(vendorID: 0x057E, productID: m.productID, localName: p.name, rssi: 0)
             continuation.yield(.discovered(id, info))
@@ -138,10 +154,16 @@ actor BLETransport: Transport {
         guard let p = peripherals[id.raw], let ch = outputChars[id.raw] else {
             throw BLETransportError.unknownDevice
         }
-        p.writeValue(payload, for: ch, type: writeType(for: ch))
+        p.writeValue(commandPayload(payload, for: id.raw), for: ch, type: writeType(for: ch))
+    }
+
+    private func commandPayload(_ payload: Data, for id: UUID) -> Data {
+        (commandPrefixes[id] ?? Data()) + payload
     }
 
     func sendVibration(_ payload: Data, to id: DeviceID) async throws {
+        // Console-channel HD rumble has not yet been validated on NJ22.
+        guard consoleInputs[id.raw] == nil else { return }
         guard let p = peripherals[id.raw], let ch = vibrationChars[id.raw] else { return }
         // For writeWithoutResponse, CoreBluetooth's per-peripheral queue can fill.
         // If it has space, write through; otherwise stash for drain on the
@@ -184,22 +206,26 @@ actor BLETransport: Transport {
         }
         // No response chars subscribed → fall back to fire-and-forget.
         guard (responseHandles[id.raw]?.isEmpty == false) else {
-            p.writeValue(payload, for: ch, type: writeType(for: ch))
+            p.writeValue(commandPayload(payload, for: id.raw), for: ch, type: writeType(for: ch))
             return nil
         }
         precondition(pendingResponses[id.raw] == nil, "overlapping sendAwaitingResponse for \(id.raw)")
         let type = writeType(for: ch)
+        let token = UUID()
         return await withCheckedContinuation { (cont: CheckedContinuation<CommandResponseFrame?, Never>) in
-            pendingResponses[id.raw] = (request: payload, cont: cont)
-            p.writeValue(payload, for: ch, type: type)
+            pendingResponses[id.raw] = (token: token, request: payload, cont: cont)
+            p.writeValue(commandPayload(payload, for: id.raw), for: ch, type: type)
             Task { [weak self] in
                 try? await Task.sleep(for: timeout)
-                await self?.expirePending(id: id.raw)
+                await self?.expirePending(id: id.raw, token: token)
             }
         }
     }
 
-    private func expirePending(id: UUID) {
+    private func expirePending(id: UUID, token: UUID) {
+        // A previous command's timer may fire after its response arrived and
+        // another command started. It must not time out the newer request.
+        guard pendingResponses[id]?.token == token else { return }
         if let pending = pendingResponses.removeValue(forKey: id) {
             pending.cont.resume(returning: nil)
         }
@@ -268,7 +294,7 @@ actor BLETransport: Transport {
     fileprivate func handleConnect(peripheral: CBPeripheral) {
         peripheral.delegate = delegate
         if let m = matcherByDevice[peripheral.identifier] {
-            peripheral.discoverServices([m.serviceUUID])
+            peripheral.discoverServices([m.serviceUUID] + (m.consoleFallback.map { [$0.serviceUUID] } ?? []))
         } else {
             peripheral.discoverServices(nil)
         }
@@ -285,6 +311,14 @@ actor BLETransport: Transport {
         secondaryChars[peripheral.identifier] = nil
         subscribedSecondaries[peripheral.identifier] = nil
         outputChars[peripheral.identifier] = nil
+        commandPrefixes[peripheral.identifier] = nil
+        sessionStartChars[peripheral.identifier] = nil
+        sessionStartResults[peripheral.identifier] = nil
+        consoleInputs[peripheral.identifier] = nil
+        consoleReady.remove(peripheral.identifier)
+        linkHoldTasks.removeValue(forKey: peripheral.identifier)?.cancel()
+        linkHoldOutstanding.remove(peripheral.identifier)
+        linkHoldChannels[peripheral.identifier] = nil
         vibrationChars[peripheral.identifier] = nil
         responseHandles[peripheral.identifier] = nil
         pendingVibration[peripheral.identifier] = nil
@@ -300,6 +334,13 @@ actor BLETransport: Transport {
               let svc = services.first(where: { $0.uuid == m.serviceUUID }) else { return }
         var chars = [m.inputCharacteristic]
         if let out = m.outputCharacteristic { chars.append(out) }
+        if let fallback = m.fallbackOutputCharacteristic { chars.append(fallback) }
+        if let console = m.consoleFallback {
+            chars.append(console.inputCharacteristic)
+            if let aux = services.first(where: { $0.uuid == console.serviceUUID }) {
+                peripheral.discoverCharacteristics([console.sessionStart], for: aux)
+            }
+        }
         if let vib = m.vibrationCharacteristic { chars.append(vib) }
         for rsp in m.responseCharacteristics { chars.append(rsp.uuid) }
         for extra in m.secondaryInputs { chars.append(extra.uuid) }
@@ -309,6 +350,10 @@ actor BLETransport: Transport {
     fileprivate func handleCharacteristicsDiscovered(peripheral: CBPeripheral, service: CBService) async {
         guard let m = matcherByDevice[peripheral.identifier],
               let chars = service.characteristics else { return }
+        if let console = m.consoleFallback,
+           let start = chars.first(where: { $0.uuid == console.sessionStart }) {
+            sessionStartChars[peripheral.identifier] = start
+        }
         guard let inputCh = chars.first(where: { $0.uuid == m.inputCharacteristic }) else { return }
         inputChars[peripheral.identifier] = inputCh
         // Defer the input-report subscription until after init — we don't want a flood of
@@ -332,13 +377,48 @@ actor BLETransport: Transport {
             vibrationChars[peripheral.identifier] = vibCh
         }
 
-        // Give the CCCD writes a moment to land before issuing commands.
-        try? await Task.sleep(for: .milliseconds(20))
-
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
-        for cmd in m.initCommands {
-            let resp = (try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(500))) ?? nil
+        // CCCD writes are asynchronous. A fixed 20 ms delay cannot establish
+        // that command responses can be received, especially on third-party
+        // controllers. Wait for CoreBluetooth to confirm the subscriptions.
+        let responseChars = chars.filter { handles[$0.uuid] != nil }
+        let subscriptionDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while !responseChars.allSatisfy(\.isNotifying),
+              peripheral.state == .connected, ContinuousClock.now < subscriptionDeadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        guard peripheral.state == .connected else { return }
+        guard !responseChars.isEmpty, responseChars.allSatisfy(\.isNotifying) else {
+            continuation.yield(.initializationFailed(id, "Nintendo command-response notifications did not become active"))
+            central.cancelPeripheralConnection(peripheral)
+            return
+        }
+
+        var receivedResponse = false
+        for (index, cmd) in m.initCommands.enumerated() {
+            guard peripheral.state == .connected else { return }
+            var resp = (try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(500))) ?? nil
+            // Probe only the initial handshake. Keep the normal path for
+            // controllers that answer it; otherwise retry the same command
+            // with the documented combined envelope (verified on NJ22-R).
+            if index == 0, resp == nil, peripheral.state == .connected,
+               let fallbackUUID = m.fallbackOutputCharacteristic,
+               let fallback = chars.first(where: { $0.uuid == fallbackUUID }) {
+                outputChars[peripheral.identifier] = fallback
+                commandPrefixes[peripheral.identifier] = m.fallbackCommandPrefix
+                if let console = m.consoleFallback {
+                    await initializeConsole(peripheral: peripheral, chars: chars, configuration: console)
+                    return
+                }
+                resp = (try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(500))) ?? nil
+            }
+            receivedResponse = receivedResponse || resp != nil
             continuation.yield(.commandResponse(id, request: cmd, response: resp))
+        }
+        guard m.initCommands.isEmpty || receivedResponse else {
+            continuation.yield(.initializationFailed(id, "Controller did not answer any Nintendo initialization command; gameplay connection is not ready"))
+            central.cancelPeripheralConnection(peripheral)
+            return
         }
 
         // Init complete — open the input-report firehose.
@@ -362,11 +442,114 @@ actor BLETransport: Transport {
         continuation.yield(.ready(id))
     }
 
+    private func initializeConsole(peripheral p: CBPeripheral, chars: [CBCharacteristic], configuration: BLEConsoleFallback) async {
+        let uuid = p.identifier
+        let id = DeviceID(transport: .ble, raw: uuid)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while sessionStartChars[uuid] == nil, p.state == .connected, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        guard let start = sessionStartChars[uuid], p.state == .connected else {
+            continuation.yield(.initializationFailed(id, "Console session-start characteristic unavailable"))
+            central.cancelPeripheralConnection(p)
+            return
+        }
+        sessionStartResults[uuid] = nil
+        continuation.yield(.consoleMode(id))
+        p.writeValue(Data([1, 0]), for: start, type: .withResponse)
+        let writeDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while sessionStartResults[uuid] == nil, p.state == .connected, ContinuousClock.now < writeDeadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        guard sessionStartResults[uuid] == true, p.state == .connected else {
+            continuation.yield(.initializationFailed(id, "Console session-start write failed"))
+            central.cancelPeripheralConnection(p)
+            return
+        }
+        // Keep a dynamic channel request pending on clones that would
+        // otherwise drop during the stack's security-request timeout. This
+        // uses the public CoreBluetooth API; no security setting is changed.
+        linkHoldTasks[uuid]?.cancel()
+        linkHoldTasks[uuid] = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.requestLinkHold(uuid)
+                do { try await Task.sleep(for: .seconds(21)) } catch { return }
+            }
+        }
+        for (index, command) in NS2Console.commands.enumerated() {
+            guard p.state == .connected else { return }
+            let response = try? await sendAwaitingResponse(command, to: id, timeout: .milliseconds(600))
+            continuation.yield(.commandResponse(id, request: command, response: response))
+            if (index == 0 || index == NS2Console.commands.count - 1), response == nil {
+                continuation.yield(.initializationFailed(id, "Console initialization command was not acknowledged"))
+                central.cancelPeripheralConnection(p)
+                return
+            }
+        }
+        guard p.state == .connected,
+              let input = chars.first(where: { $0.uuid == configuration.inputCharacteristic }) else { return }
+        inputChars[uuid] = input
+        consoleInputs[uuid] = configuration
+        p.discoverDescriptors(for: input)
+    }
+
+    private func requestLinkHold(_ uuid: UUID) {
+        guard let p = peripherals[uuid], p.state == .connected,
+              !linkHoldOutstanding.contains(uuid), linkHoldChannels[uuid] == nil else { return }
+        linkHoldOutstanding.insert(uuid)
+        p.openL2CAPChannel(0x80)
+    }
+
+    fileprivate func handleL2CAP(peripheral: CBPeripheral, channel: RetainedChannel?) {
+        linkHoldOutstanding.remove(peripheral.identifier)
+        if let channel { linkHoldChannels[peripheral.identifier] = channel }
+    }
+
+    fileprivate func handleWriteCompletion(peripheral p: CBPeripheral, characteristic: CBCharacteristic, success: Bool) {
+        if characteristic.uuid == matcherByDevice[p.identifier]?.consoleFallback?.sessionStart {
+            sessionStartResults[p.identifier] = success
+        }
+    }
+
+    fileprivate func handleDescriptors(peripheral p: CBPeripheral, characteristic: CBCharacteristic) {
+        guard let configuration = consoleInputs[p.identifier],
+              characteristic.uuid == configuration.inputCharacteristic else { return }
+        if let rate = characteristic.descriptors?.first(where: { $0.uuid == configuration.rateDescriptor }) {
+            p.writeValue(Data([0x85, 0]), for: rate)
+        } else {
+            let id = DeviceID(transport: .ble, raw: p.identifier)
+            continuation.yield(.initializationFailed(id, "Console input report-rate descriptor missing"))
+            central.cancelPeripheralConnection(p)
+        }
+    }
+
+    fileprivate func handleDescriptorWrite(peripheral p: CBPeripheral, descriptor: CBDescriptor, success: Bool) {
+        guard let configuration = consoleInputs[p.identifier], descriptor.uuid == configuration.rateDescriptor else { return }
+        if success, let input = inputChars[p.identifier] { p.setNotifyValue(true, for: input) }
+        else {
+            continuation.yield(.initializationFailed(DeviceID(transport: .ble, raw: p.identifier), "Console input report-rate write failed"))
+            central.cancelPeripheralConnection(p)
+        }
+    }
+
+    fileprivate func handleSubscription(peripheral p: CBPeripheral, characteristic: CBCharacteristic) {
+        guard let configuration = consoleInputs[p.identifier], characteristic.uuid == configuration.inputCharacteristic else { return }
+        if !characteristic.isNotifying {
+            continuation.yield(.initializationFailed(DeviceID(transport: .ble, raw: p.identifier), "Console input notifications failed"))
+            central.cancelPeripheralConnection(p)
+        }
+    }
+
     fileprivate func handleNotification(peripheral: CBPeripheral, characteristic: CBCharacteristic) {
         guard let value = characteristic.value else { return }
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         if let inputCh = inputChars[peripheral.identifier], characteristic == inputCh {
-            continuation.yield(.reportReceived(id, reportID: nil, value))
+            if consoleInputs[peripheral.identifier] != nil {
+                // Readiness means real input, not merely ACKed setup writes.
+                guard value.count == 63, value[value.startIndex + 4] == 7 else { return }
+                if consoleReady.insert(peripheral.identifier).inserted { continuation.yield(.ready(id)) }
+            }
+            continuation.yield(.reportReceived(id, reportID: consoleInputs[peripheral.identifier]?.inputReportID, value))
             return
         }
         if let rid = secondaryInputs[peripheral.identifier]?[characteristic.uuid] {
@@ -442,6 +625,29 @@ private final class BLEDelegate: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         Task { [weak transport] in await transport?.handlePeripheralReady(peripheral: peripheral) }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        let success = error == nil
+        Task { [weak transport] in await transport?.handleWriteCompletion(peripheral: peripheral, characteristic: characteristic, success: success) }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverDescriptorsFor characteristic: CBCharacteristic, error: Error?) {
+        Task { [weak transport] in await transport?.handleDescriptors(peripheral: peripheral, characteristic: characteristic) }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor descriptor: CBDescriptor, error: Error?) {
+        let success = error == nil
+        Task { [weak transport] in await transport?.handleDescriptorWrite(peripheral: peripheral, descriptor: descriptor, success: success) }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        Task { [weak transport] in await transport?.handleSubscription(peripheral: peripheral, characteristic: characteristic) }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
+        let retained = channel.map(BLETransport.RetainedChannel.init)
+        Task { [weak transport] in await transport?.handleL2CAP(peripheral: peripheral, channel: retained) }
     }
 }
 

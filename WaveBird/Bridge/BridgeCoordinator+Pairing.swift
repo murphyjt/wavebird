@@ -14,6 +14,7 @@ extension BridgeCoordinator {
     // we fall back to local-only logic.
     func maybePromptForPairing(record: DeviceRecord) {
         guard pairingPrompt == nil,
+              !record.usesConsoleProtocol,
               record.id.transport == .ble,
               let serial = record.serial,
               !declinedPairingThisSession.contains(serial),

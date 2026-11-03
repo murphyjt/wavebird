@@ -18,6 +18,7 @@ enum DeviceConnectionState: Sendable, Equatable {
 }
 
 struct DeviceRecord: Identifiable {
+    var usesConsoleProtocol = false
     let id: DeviceID
     let profile: any ControllerProfile
     var advertisement: AdvertisementInfo
