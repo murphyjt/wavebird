@@ -10,6 +10,7 @@ protocol ControllerProfile: Sendable {
     var hidProductID: UInt16 { get }
 
     func parseBLEReport(_ data: Data, calibration: ControllerCalibration) -> ControllerState?
+    func parseBLEReport(_ data: Data, reportID: UInt8?, calibration: ControllerCalibration) -> ControllerState?
     func parseUSBReport(_ data: Data, reportID: UInt8, calibration: ControllerCalibration) -> ControllerState?
 
     // Encode a normalized RumbleCommand into a BLE vibration payload for this
@@ -38,6 +39,10 @@ protocol ControllerProfile: Sendable {
 }
 
 extension ControllerProfile {
+    func parseBLEReport(_ data: Data, reportID: UInt8?, calibration: ControllerCalibration) -> ControllerState? {
+        guard reportID == nil else { return nil }
+        return parseBLEReport(data, calibration: calibration)
+    }
     func encodeRumble(_ cmd: RumbleCommand, sequence: UInt8, settings: RumbleSettings.Snapshot) -> Data? { nil }
 
     var rumbleRefreshInterval: Duration? { nil }
@@ -132,6 +137,11 @@ struct BLEMatcher: Sendable {
     let responseCharacteristics: [ResponseChannel]
     let initCommands: [Data]
     let vibrationCharacteristic: CBUUID?
+    // Some third-party Joy-Cons expose the basic command characteristic but
+    // only answer through the combined rumble/command characteristic.
+    let fallbackOutputCharacteristic: CBUUID?
+    let fallbackCommandPrefix: Data
+    let consoleFallback: BLEConsoleFallback?
     // Optional secondary input characteristics whose notifications are
     // forwarded verbatim through HIDOutputSession.transformRawReport (used
     // by ns2Passthrough). Notifications on these are tagged with the channel's
@@ -146,7 +156,10 @@ struct BLEMatcher: Sendable {
         responseCharacteristics: [ResponseChannel],
         initCommands: [Data],
         vibrationCharacteristic: CBUUID?,
-        secondaryInputs: [InputChannel] = []
+        secondaryInputs: [InputChannel] = [],
+        fallbackOutputCharacteristic: CBUUID? = nil,
+        fallbackCommandPrefix: Data = Data(),
+        consoleFallback: BLEConsoleFallback? = nil
     ) {
         self.productID = productID
         self.serviceUUID = serviceUUID
@@ -156,6 +169,9 @@ struct BLEMatcher: Sendable {
         self.initCommands = initCommands
         self.vibrationCharacteristic = vibrationCharacteristic
         self.secondaryInputs = secondaryInputs
+        self.fallbackOutputCharacteristic = fallbackOutputCharacteristic
+        self.fallbackCommandPrefix = fallbackCommandPrefix
+        self.consoleFallback = consoleFallback
     }
 }
 

@@ -36,7 +36,7 @@ extension BridgeCoordinator {
             for await raw in stream {
                 let parsed: ControllerState?
                 switch kind {
-                case .ble: parsed = profile.parseBLEReport(raw.data, calibration: calibration)
+                case .ble: parsed = profile.parseBLEReport(raw.data, reportID: raw.reportID, calibration: calibration)
                 case .usb: parsed = profile.parseUSBReport(raw.data, reportID: raw.reportID ?? 0, calibration: calibration)
                 }
                 guard let parsed else { continue }
@@ -89,7 +89,7 @@ extension BridgeCoordinator {
                       let vhid = pair.virtualHID, let session = pair.session else { continue }
                 let parsed: ControllerState?
                 switch kind {
-                case .ble: parsed = profile.parseBLEReport(raw.data, calibration: calibration)
+                case .ble: parsed = profile.parseBLEReport(raw.data, reportID: raw.reportID, calibration: calibration)
                 case .usb: parsed = profile.parseUSBReport(raw.data, reportID: raw.reportID ?? 0, calibration: calibration)
                 }
                 guard let state = parsed else { continue }
@@ -146,6 +146,7 @@ extension BridgeCoordinator {
             }
 
         case .connecting(let id):
+            devices[id]?.usesConsoleProtocol = false
             devices[id]?.connectionState = .connecting
             armConnectingTimeout(id, kind: kind)
 
@@ -295,8 +296,27 @@ extension BridgeCoordinator {
             // isn't raw-forwarding; its different layout would misdecode as
             // bogus buttons/sticks/IMU, so skip it. The parse itself happens in
             // the per-device dispatch task (off-main for solo devices).
-            if kind == .ble, reportID != nil { return }
+            if kind == .ble, reportID != nil,
+               reportID != record.profile.bleMatcher?.consoleFallback?.inputReportID { return }
             stateContinuations[id]?.yield(RawReport(reportID: reportID, data: data))
+
+        case .consoleMode(let id):
+            devices[id]?.usesConsoleProtocol = true
+
+        case .initializationFailed(let id, let msg):
+            cancelConnectingTimeout(id)
+            devices[id]?.connectionState = .failed(msg)
+            // Use the existing reconnect guard so rejecting a false .ready
+            // doesn't turn into a fast connect/init/disconnect loop.
+            let until = ContinuousClock.now.advanced(by: .seconds(60))
+            vhidFailureCooldowns[id] = until
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(until: until, clock: .continuous)
+                guard let self, self.vhidFailureCooldowns[id] == until else { return }
+                self.vhidFailureCooldowns[id] = nil
+                await self.rescanAfterVHIDFailureCooldown()
+            }
+            stderrLog(msg)
 
         case .error(_, let msg):
             stderrLog(msg)
