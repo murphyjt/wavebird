@@ -84,14 +84,23 @@ struct InputSignature: Hashable, Sendable {
 }
 
 extension ControllerState {
-    // >>8 quantizes the centered ~-2047...2047 sticks into ~16 buckets (±128
-    // deadzone) so at-rest analog noise reads as unchanging; triggers >>4. IMU
-    // is intentionally excluded — gyro/accel noise never settles.
+    // Quantizes the centered ~-2047...2047 sticks into ~16 buckets of 256 with
+    // neutral mid-bucket (±128 deadzone) so at-rest analog noise reads as
+    // unchanging; triggers >>4. IMU is intentionally excluded — gyro/accel
+    // noise never settles.
     var idleSignature: InputSignature {
         InputSignature(buttons: buttons.rawValue,
-                       lx: leftStick.x >> 8, ly: leftStick.y >> 8,
-                       rx: rightStick.x >> 8, ry: rightStick.y >> 8,
+                       lx: Self.idleBucket(leftStick.x), ly: Self.idleBucket(leftStick.y),
+                       rx: Self.idleBucket(rightStick.x), ry: Self.idleBucket(rightStick.y),
                        tl: triggerL >> 4, tr: triggerR >> 4)
+    }
+
+    // Round to the nearest bucket rather than floor: a bare `v >> 8` puts a
+    // bucket edge exactly at neutral (-1 >> 8 == -1, 0 >> 8 == 0), so a stick
+    // resting at ±1 flips the signature on every report and the idle sweep
+    // never fires.
+    static func idleBucket(_ v: Int16) -> Int16 {
+        Int16(truncatingIfNeeded: (Int(v) + 128) >> 8)
     }
 
     // Apply per-stick transforms on the centered 12-bit sticks. The source

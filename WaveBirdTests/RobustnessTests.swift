@@ -23,3 +23,29 @@ struct RumbleCommandFoldTests {
         #expect(RumbleCommand().foldedToMono.isStop)
     }
 }
+
+// The idle sweep disconnects a controller whose signature stops changing.
+// A stick jittering around neutral must not count as input.
+struct IdleSignatureTests {
+
+    private func state(lx: Int16) -> ControllerState {
+        var s = ControllerState.zero
+        s.leftStick = SIMD2(lx, 0)
+        return s
+    }
+
+    @Test func jitterAroundNeutralKeepsOneSignature() {
+        let sigs = Set([-127, -2, -1, 0, 1, 2, 127].map { state(lx: Int16($0)).idleSignature })
+        #expect(sigs.count == 1)
+    }
+
+    @Test func realDeflectionChangesSignature() {
+        #expect(state(lx: 0).idleSignature != state(lx: 300).idleSignature)
+        #expect(state(lx: 0).idleSignature != state(lx: -300).idleSignature)
+    }
+
+    @Test func railsStayInRange() {
+        #expect(ControllerState.idleBucket(2047) == 8)
+        #expect(ControllerState.idleBucket(-2047) == -8)
+    }
+}
