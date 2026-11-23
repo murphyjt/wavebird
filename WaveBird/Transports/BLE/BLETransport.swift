@@ -93,8 +93,15 @@ actor BLETransport: Transport {
         guard !services.isEmpty else { return }
         let connected = central.retrieveConnectedPeripherals(withServices: services)
         for p in connected {
+            // Every NS2 controller exposes the same service UUID, so a
+            // connected peripheral doesn't say which product it is (that only
+            // comes from the advertisement). Reuse the matcher from an earlier
+            // discovery; with several matchers and no history, don't guess —
+            // tagging a Joy-Con or Pro with the first (GameCube) matcher gave
+            // it the wrong product ID and characteristic UUIDs, which broke
+            // pairing, rumble and the Joy-Con pair path.
+            guard let m = matcherByDevice[p.identifier] ?? (matchers.count == 1 ? matchers.first : nil) else { continue }
             peripherals[p.identifier] = p
-            guard let m = matchers.first else { continue }
             matcherByDevice[p.identifier] = m
             let id = DeviceID(transport: .ble, raw: p.identifier)
             let info = AdvertisementInfo(vendorID: 0x057E, productID: m.productID, localName: p.name, rssi: 0)
