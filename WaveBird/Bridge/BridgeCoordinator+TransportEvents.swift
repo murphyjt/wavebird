@@ -153,6 +153,12 @@ extension BridgeCoordinator {
             devices[id]?.connectionState = .connected
 
         case .ready(let id):
+            // .ready is only meaningful straight after .connected. A late one
+            // (the connect timeout already marked the record .failed, or the
+            // link dropped) must not resurrect the record: once it reads
+            // .ready, re-discovery is ignored and the controller can never
+            // reconnect.
+            guard devices[id]?.connectionState == .connected else { return }
             devices[id]?.connectionState = .ready
             cancelConnectingTimeout(id)
             // Seed activity so the idle sweep doesn't drop a freshly-connected

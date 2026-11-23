@@ -51,6 +51,9 @@ actor BLETransport: Transport {
     // queue is full, so we stash the latest pending payload here and drain it from
     // peripheralIsReady. Rumble is naturally coalescable — the freshest frame wins.
     private var pendingVibration: [UUID: Data] = [:]
+    // Bumped on every connect and disconnect, so an init handshake can tell
+    // whether the link it started on is still the current one.
+    private var connectionGeneration: [UUID: UInt64] = [:]
 
     init() {
         // bufferingNewest caps memory if the main-actor consumer falls behind.
@@ -266,6 +269,7 @@ actor BLETransport: Transport {
     }
 
     fileprivate func handleConnect(peripheral: CBPeripheral) {
+        connectionGeneration[peripheral.identifier, default: 0] &+= 1
         peripheral.delegate = delegate
         if let m = matcherByDevice[peripheral.identifier] {
             peripheral.discoverServices([m.serviceUUID])
@@ -279,6 +283,7 @@ actor BLETransport: Transport {
     fileprivate func handleDisconnect(peripheral: CBPeripheral, error: Error?) {
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         let reason: DisconnectReason = error.map { .error($0.localizedDescription) } ?? .userInitiated
+        connectionGeneration[peripheral.identifier, default: 0] &+= 1
         // Keep peripherals[]/matcherByDevice[] so connect() can be retried without a fresh advertisement.
         inputChars[peripheral.identifier] = nil
         secondaryInputs[peripheral.identifier] = nil
@@ -346,14 +351,26 @@ actor BLETransport: Transport {
             vibrationChars[peripheral.identifier] = vibCh
         }
 
+        // The init handshake suspends across many awaits. If the link drops
+        // meanwhile (or drops and comes back), the generation moves on and
+        // this pass no longer owns the connection. Without the check the loop
+        // kept going — every command failing silently — and yielded .ready
+        // for a dead link after .disconnected had already been sent.
+        let generation = connectionGeneration[peripheral.identifier]
+        func linkStillOurs() -> Bool {
+            connectionGeneration[peripheral.identifier] == generation && peripheral.state == .connected
+        }
+
         // Give the CCCD writes a moment to land before issuing commands.
         try? await Task.sleep(for: .milliseconds(20))
 
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         for cmd in m.initCommands {
+            guard linkStillOurs() else { return }
             let resp = (try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(500))) ?? nil
             continuation.yield(.commandResponse(id, request: cmd, response: resp))
         }
+        guard linkStillOurs() else { return }
 
         // Init complete — open the input-report firehose.
         peripheral.setNotifyValue(true, for: inputCh)
