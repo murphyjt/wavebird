@@ -298,6 +298,25 @@ struct MappingProfileStoreTests {
         #expect(store.profile(id: "good-id") != nil)
     }
 
+    // A record this build can't decode (e.g. from a newer version) must
+    // survive the next save, not be wiped by the rewrite.
+    @Test func undecodableRecordSurvivesASave() throws {
+        let defaults = UserDefaults(suiteName: "MappingProfileStoreTests")!
+        defaults.removePersistentDomain(forName: "MappingProfileStoreTests")
+        let future = Data(#"{"id":"future-id","name":"Future","baseModeID":"switchPro","leftStick":{"rotation":"cw45"}}"#.utf8)
+        let good = MappingProfile(id: "good-id", name: "Good", baseModeID: "switchPro", mapping: [:])
+        defaults.set(["good-id": try JSONEncoder().encode(good), "future-id": future],
+                     forKey: MappingProfileStore.defaultsKey)
+        let store = MappingProfileStore(defaults: defaults)
+        #expect(store.profile(id: "future-id") == nil)
+
+        store.upsert(MappingProfile(id: "new-id", name: "New", baseModeID: "switchPro", mapping: [:]))
+
+        let saved = try #require(defaults.dictionary(forKey: MappingProfileStore.defaultsKey) as? [String: Data])
+        #expect(saved["future-id"] == future)
+        #expect(saved["good-id"] != nil && saved["new-id"] != nil)
+    }
+
     @Test func deleteReturnsBaseDefaultFallback() {
         let store = makeStore()
         let profile = MappingProfile(id: UUID().uuidString, name: "Doomed",
