@@ -292,6 +292,20 @@ actor BLETransport: Transport {
             pending.cont.resume(returning: nil)
         }
         continuation.yield(.disconnected(id, reason))
+        restartScanSession()
+    }
+
+    // With duplicate filtering on, CoreBluetooth reports each peripheral once
+    // per scan session. A controller discovered earlier in this session is
+    // therefore never re-reported when it re-advertises after a drop (idle
+    // sweep, controller-side disconnect, connect timeout), so press-to-reconnect
+    // silently does nothing. Restarting the scan opens a fresh session; the
+    // controller's next advertisement fires .discovered and the coordinator
+    // reconnects it. No-op while discovery is off (e.g. sleep teardown).
+    private func restartScanSession() {
+        guard wantsScan, central.state == .poweredOn else { return }
+        central.stopScan()
+        startScanIfReady()
     }
 
     fileprivate func handleServicesDiscovered(peripheral: CBPeripheral) {
