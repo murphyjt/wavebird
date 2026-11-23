@@ -45,7 +45,10 @@ actor BLETransport: Transport {
     private var vibrationChars: [UUID: CBCharacteristic] = [:]
     // Per device, a map of subscribed response-char UUID → its handle.
     private var responseHandles: [UUID: [CBUUID: UInt16]] = [:]
-    private var pendingResponses: [UUID: (request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
+    // `token` identifies the request, so a timeout only expires the request
+    // that armed it — not a later one that reused the device's slot.
+    private var pendingResponses: [UUID: (request: Data, token: UInt64, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
+    private var nextRequestToken: UInt64 = 0
     // Single-slot coalescing queue for vibration writes that hit backpressure.
     // CoreBluetooth silently drops writeWithoutResponse calls when the per-peripheral
     // queue is full, so we stash the latest pending payload here and drain it from
@@ -199,20 +202,25 @@ actor BLETransport: Transport {
         }
         precondition(pendingResponses[id.raw] == nil, "overlapping sendAwaitingResponse for \(id.raw)")
         let type = writeType(for: ch)
+        nextRequestToken &+= 1
+        let token = nextRequestToken
         return await withCheckedContinuation { (cont: CheckedContinuation<CommandResponseFrame?, Never>) in
-            pendingResponses[id.raw] = (request: payload, cont: cont)
+            pendingResponses[id.raw] = (request: payload, token: token, cont: cont)
             p.writeValue(payload, for: ch, type: type)
             Task { [weak self] in
                 try? await Task.sleep(for: timeout)
-                await self?.expirePending(id: id.raw)
+                await self?.expirePending(id: id.raw, token: token)
             }
         }
     }
 
-    private func expirePending(id: UUID) {
-        if let pending = pendingResponses.removeValue(forKey: id) {
-            pending.cont.resume(returning: nil)
-        }
+    // Keyed by request, not device: command N's timer used to fire while
+    // command N+1 was pending (N answered early), cutting N+1 short — flash
+    // reads for serial/calibration and LTK pairing steps then failed at random.
+    private func expirePending(id: UUID, token: UInt64) {
+        guard pendingResponses[id]?.token == token,
+              let pending = pendingResponses.removeValue(forKey: id) else { return }
+        pending.cont.resume(returning: nil)
     }
 
     // Response framing echoes the request's cmd ID (byte 0) and subcmd (byte 3).
