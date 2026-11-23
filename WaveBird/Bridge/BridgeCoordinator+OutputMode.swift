@@ -234,7 +234,11 @@ extension BridgeCoordinator {
                 return
             }
 
-            if let cmd = session.parseRumble(type: type, id: id, data: data) {
+            if let parsed = session.parseRumble(type: type, id: id, data: data) {
+                // A Joy-Con's encoder plays only its own side of the command
+                // (that is how the pair path splits stereo rumble). Solo, it
+                // must play whichever channel the game drives.
+                let cmd = profile is JoyConProfile ? parsed.foldedToMono : parsed
                 rumbleRefresh.cancel()
                 // Pump a fresh counter on every outgoing command. GC/Pro dedupe
                 // byte-identical successive payloads, so the tid nibble must vary

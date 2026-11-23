@@ -82,6 +82,18 @@ struct RumbleCommand: Sendable, Hashable {
     var rightFreqOverride: UInt16? = nil
 
     var isStop: Bool { leftAmp == 0 && rightAmp == 0 }
+
+    // Both channels collapsed onto one motor, the stronger side winning
+    // (with its carrier override, if any). For a single-sided device that
+    // plays a stereo command on its own, e.g. a solo Joy-Con: its encoder
+    // reads only its own side, so a game driving just the other motor would
+    // otherwise leave it silent.
+    var foldedToMono: RumbleCommand {
+        let leftWins = leftAmp >= rightAmp
+        let amp = leftWins ? leftAmp : rightAmp
+        let freq = leftWins ? (leftFreqOverride ?? rightFreqOverride) : (rightFreqOverride ?? leftFreqOverride)
+        return RumbleCommand(leftAmp: amp, rightAmp: amp, leftFreqOverride: freq, rightFreqOverride: freq)
+    }
 }
 
 // Cross-controller shoulder/trigger model. "Bumper" = top secondary, "trigger"
