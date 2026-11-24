@@ -4,7 +4,7 @@ name: Release
 # limited to `v*` tags — so workflow_dispatch only gets them with a tag ref):
 #   APPLE_CERTIFICATE_P12_BASE64       — Developer ID Application cert (.p12) base64-encoded
 #   APPLE_CERTIFICATE_PASSWORD         — password used when exporting the p12
-#   APPLE_PROVISIONING_PROFILE_BASE64  — Developer ID provisioning profile, base64-encoded
+#   APPLE_PROVISIONING_PROFILE_BASE64  — "WaveBird Developer ID G2" provisioning profile, base64-encoded
 #   APPLE_TEAM_ID                      — 10-char team ID from developer.apple.com
 #   APPLE_ID                           — Apple ID email used for notarization
 #   APPLE_APP_SPECIFIC_PASSWORD        — app-specific password from appleid.apple.com
@@ -82,7 +82,7 @@ jobs:
             DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
-            PROVISIONING_PROFILE_SPECIFIER="WaveBird Developer ID" \
+            PROVISIONING_PROFILE_SPECIFIER="WaveBird Developer ID G2" \
             OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
             build
 
