@@ -19,9 +19,6 @@ on:
 
 permissions: {}
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   sign:
     if: >-
@@ -134,7 +131,7 @@ jobs:
           echo "Signing $SHA from PR Build run $RUN_ID"
 
       - name: Download unsigned app
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: WaveBird-unsigned
           run-id: ${{ steps.resolve.outputs.run_id }}
@@ -145,7 +142,7 @@ jobs:
         run: ditto -x -k unsigned/WaveBird-unsigned.zip work
 
       - name: Import Developer ID certificate
-        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3.0.0
+        uses: apple-actions/import-codesign-certs@288b8ec97b82c66b6f2a6baaf7acc8dfbcbe331c # v7.2.0
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -217,13 +214,13 @@ jobs:
           ditto -c -k --keepParent work/WaveBird.app "dist/WaveBird-$LABEL.zip"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/WaveBird-${{ steps.resolve.outputs.label }}.zip
 
       - name: Upload signed app
         id: upload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: WaveBird-${{ steps.resolve.outputs.label }}
           path: dist/WaveBird-${{ steps.resolve.outputs.label }}.zip

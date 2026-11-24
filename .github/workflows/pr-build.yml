@@ -16,16 +16,13 @@ concurrency:
   group: pr-build-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   build:
     runs-on: macos-26
 
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The reviewed commit, not GitHub's default merge-with-base ref.
           ref: ${{ github.event.pull_request.head.sha }}
@@ -59,7 +56,7 @@ jobs:
         run: ditto -c -k --keepParent build/Build/Products/Release/WaveBird.app WaveBird-unsigned.zip
 
       - name: Upload unsigned app
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: WaveBird-unsigned
           path: WaveBird-unsigned.zip
