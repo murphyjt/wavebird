@@ -1,0 +1,253 @@
+name: PR Sign
+
+# Privileged half of PR signing. The repo owner comments `/sign <full-sha>` on
+# a PR after reviewing exactly that commit; this job signs + notarizes the
+# unsigned .app that pr-build.yml produced for that SHA. Later pushes are
+# never signed until a new `/sign` names them.
+#
+# issue_comment workflows always run from the default branch's copy of this
+# file, and no PR code is executed here — the job checks nothing out, reads
+# the PR's entitlements file via the API, and runs codesign/notarytool on the
+# artifact.
+# PRs that change .github/, WaveBird.xcodeproj or the entitlements file are
+# refused (see below).
+# Secrets come from the `pr-signing` environment, which only allows `main`.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  sign:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/sign ') &&
+      github.event.comment.user.login == github.repository_owner
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: pr-signing
+    # Job-level so unrelated comments can't displace a queued /sign.
+    concurrency:
+      group: pr-sign-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read        # compare + read the entitlements file via the API
+      actions: read         # find the PR Build run and download its artifact
+      pull-requests: write  # comment the result back
+      id-token: write       # attest-build-provenance
+      attestations: write
+
+    steps:
+      # No checkout: everything about the PR is read through the API, so no
+      # PR (or repo) source ever lands on the runner that holds the cert.
+      - name: Resolve reviewed commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ github.event.comment.body }}
+          PR: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # No early-exiting readers (head, grep -q) on pipes: with pipefail, the
+          # writer's broken pipe would fail the step and reject a valid /sign.
+          FIRST_LINE=${BODY%%$'\n'*}
+          SHA=$(awk '{print $2}' <<<"${FIRST_LINE%$'\r'}")
+          if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Usage: /sign <full 40-character commit SHA>"
+            exit 1
+          fi
+          PR_COMMITS=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].sha')
+          if ! grep -qx "$SHA" <<<"$PR_COMMITS"; then
+            echo "::error::$SHA is not a commit on PR #$PR"
+            exit 1
+          fi
+
+          HEAD_REPO=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.repo.full_name')
+          BASE_REF=$(gh api "repos/$REPO/pulls/$PR" --jq '.base.ref')
+
+          # The unsigned build was produced by the PR's own copy of
+          # pr-build.yml and its own build settings (Run Script phases, scheme
+          # pre/post-actions, package references), so a PR touching either
+          # could make the artifact differ from its source. The entitlements
+          # file goes straight into the signature, where one line (e.g.
+          # disable-library-validation) is easy to miss in review. All of
+          # these get signed locally or via a release tag instead. Three-dot
+          # compare diffs against the merge base, like `git diff base...sha`.
+          COMPARE=$(gh api "repos/$REPO/compare/$BASE_REF...$SHA")
+          # The compare API lists at most 300 files; past that we can't tell.
+          if (( $(jq '.files | length' <<<"$COMPARE") >= 300 )); then
+            echo "::error::PR #$PR changes 300+ files — too large to verify; sign locally"
+            exit 1
+          fi
+          # The runner's APFS is case- and normalization-insensitive, so match
+          # by lowercased pattern (wavebird.xcodeproj/… lands in the real
+          # project on checkout) and refuse non-ASCII paths outright.
+          CHANGED=$(jq -r '.files[] | .filename, (.previous_filename // empty)
+            | select(
+                (ascii_downcase | startswith(".github/"))
+                or (ascii_downcase | test("(^|/)[^/]+\\.(xcodeproj|xcworkspace)/"))
+                or (ascii_downcase | test("\\.(xcscheme|xcconfig|entitlements|xctestplan)$"))
+                or (ascii_downcase | test("(^|/)(package\\.swift|package\\.resolved)$|(^|/)\\.swiftpm/"))
+                or test("[^ -~]"))' <<<"$COMPARE")
+          if [[ -n "$CHANGED" ]]; then
+            echo "::error::PR #$PR changes build configuration or entitlements — not signing. Build and sign it locally instead."
+            echo "$CHANGED"
+            exit 1
+          fi
+
+          # Two paths that differ only by case overwrite each other on
+          # checkout, so the build can use a file other than the one the diff
+          # shows as reviewed. Check the whole tree being signed, not just
+          # the diff. The trees API lists directories too, so a cased variant
+          # of a folder is caught as well.
+          TREE=$(gh api "repos/$REPO/git/trees/$SHA?recursive=1")
+          if [[ $(jq -r '.truncated' <<<"$TREE") != false ]]; then
+            echo "::error::File tree for $SHA is too large to check for case collisions; sign locally"
+            exit 1
+          fi
+          COLLISIONS=$(jq -r '[.tree[].path] | unique | group_by(ascii_downcase)
+            | map(select(length > 1)) | .[] | join("  <->  ")' <<<"$TREE")
+          if [[ -n "$COLLISIONS" ]]; then
+            echo "::error::$SHA has paths that differ only by case — not signing."
+            echo "$COLLISIONS"
+            exit 1
+          fi
+
+          RUN_ID=$(gh api "repos/$REPO/actions/workflows/pr-build.yml/runs?head_sha=$SHA&event=pull_request&status=success&per_page=100" \
+            --jq "[.workflow_runs[] | select(.head_repository.full_name == \"$HEAD_REPO\")][0].id // empty")
+          if [[ -z "$RUN_ID" ]]; then
+            echo "::error::No successful PR Build run for $SHA yet"
+            exit 1
+          fi
+
+          {
+            echo "sha=$SHA"
+            echo "run_id=$RUN_ID"
+            echo "label=pr$PR-${SHA:0:7}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Signing $SHA from PR Build run $RUN_ID"
+
+      - name: Download unsigned app
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: WaveBird-unsigned
+          run-id: ${{ steps.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: unsigned
+
+      - name: Unpack
+        run: ditto -x -k unsigned/WaveBird-unsigned.zip work
+
+      - name: Import Developer ID certificate
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3.0.0
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      - name: Embed provisioning profile
+        env:
+          PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          echo "$PROFILE_BASE64" | base64 --decode > work/WaveBird.app/Contents/embedded.provisionprofile
+          security cms -D -i work/WaveBird.app/Contents/embedded.provisionprofile \
+            | plutil -extract Name raw -o - -
+
+      - name: Sign with the reviewed commit's entitlements
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          APP_PATH="work/WaveBird.app"
+          gh api "repos/$REPO/contents/WaveBird/WaveBird.entitlements?ref=$SHA" \
+            -H 'Accept: application/vnd.github.raw' > entitlements.plist
+          plutil -lint entitlements.plist
+          codesign --force \
+            --sign "Developer ID Application" \
+            --options runtime \
+            --timestamp \
+            --entitlements entitlements.plist \
+            "$APP_PATH"
+          echo "Signed entitlements:"
+          codesign -d --entitlements :- "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          APP_PATH="work/WaveBird.app"
+          ditto -c -k --keepParent "$APP_PATH" notarize.zip
+          RESULT=$(xcrun notarytool submit notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait \
+            --output-format json)
+          echo "$RESULT"
+          STATUS=$(echo "$RESULT" | jq -r '.status')
+          ID=$(echo "$RESULT" | jq -r '.id')
+          if [[ "$STATUS" != "Accepted" ]]; then
+            echo "::error::Notarization failed: $STATUS"
+            echo "::group::Notarization log"
+            xcrun notarytool log "$ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD"
+            echo "::endgroup::"
+            exit 1
+          fi
+          xcrun stapler staple "$APP_PATH"
+          spctl --assess --type execute -vv "$APP_PATH"
+
+      - name: Package
+        env:
+          LABEL: ${{ steps.resolve.outputs.label }}
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent work/WaveBird.app "dist/WaveBird-$LABEL.zip"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/WaveBird-${{ steps.resolve.outputs.label }}.zip
+
+      - name: Upload signed app
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WaveBird-${{ steps.resolve.outputs.label }}
+          path: dist/WaveBird-${{ steps.resolve.outputs.label }}.zip
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Report result
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" \
+            --body "Signed and notarized \`$SHA\`: $URL"
+
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" --body "/sign failed: $RUN_URL"

@@ -1,0 +1,69 @@
+name: PR Build
+
+# Unprivileged half of PR signing: builds the PR's exact head commit with
+# signing disabled and uploads the unsigned .app. No secrets are referenced
+# here, so fork PRs and PR-modified copies of this file can't reach the cert.
+# pr-sign.yml picks the artifact up when the owner comments `/sign <sha>`.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The reviewed commit, not GitHub's default merge-with-base ref.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0      # history + this repo's tags, for git describe
+          persist-credentials: false
+
+      # Version = the newest v* release in the reviewed commit's own history
+      # plus a PR suffix (e.g. 0.9.0-pr16.187d89e). UpdateChecker's numeric
+      # compare then ranks it above the release it's built on and below every
+      # later one, so testers are offered real updates but never a downgrade.
+      - name: Build (Release, unsigned)
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          BASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$HEAD_SHA" 2>/dev/null || echo v0.0.0)
+          VERSION="${BASE#v}-pr${PR_NUMBER}.${HEAD_SHA:0:7}"
+          echo "Building version: $VERSION"
+          xcodebuild \
+            -project WaveBird.xcodeproj \
+            -scheme WaveBird \
+            -configuration Release \
+            -derivedDataPath build \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package
+        # ditto preserves bundle metadata that a plain zip would drop.
+        run: ditto -c -k --keepParent build/Build/Products/Release/WaveBird.app WaveBird-unsigned.zip
+
+      - name: Upload unsigned app
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WaveBird-unsigned
+          path: WaveBird-unsigned.zip
+          retention-days: 14
+          if-no-files-found: error
+          # A re-run of this run (to replace an expired artifact) reuses the name.
+          overwrite: true

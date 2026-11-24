@@ -1,6 +1,7 @@
 name: Release
 
-# Required repository secrets:
+# Required secrets, stored in the `release` environment (deployment refs
+# limited to `v*` tags — so workflow_dispatch only gets them with a tag ref):
 #   APPLE_CERTIFICATE_P12_BASE64       — Developer ID Application cert (.p12) base64-encoded
 #   APPLE_CERTIFICATE_PASSWORD         — password used when exporting the p12
 #   APPLE_PROVISIONING_PROFILE_BASE64  — Developer ID provisioning profile, base64-encoded
@@ -26,6 +27,7 @@ env:
 jobs:
   release:
     runs-on: macos-26
+    environment: release
 
     steps:
       - name: Checkout
