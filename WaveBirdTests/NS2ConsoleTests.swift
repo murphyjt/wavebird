@@ -95,6 +95,51 @@ struct NS2ConsoleTests {
         #expect(!record.usesConsoleProtocol)
     }
 
+    @MainActor
+    @Test func restoringCommonModeAppliesDeferredCalibrationAndRestartsOnlyThatSide() async throws {
+        let leftID = DeviceID(transport: .ble, raw: UUID())
+        let rightID = DeviceID(transport: .ble, raw: UUID())
+        let coordinator = BridgeCoordinator(profiles: [], transports: [])
+        coordinator.joyConPair = JoyConPair(leftID: leftID, rightID: rightID)
+        for (id, side) in [(leftID, JoyConProfile.Side.left), (rightID, .right)] {
+            let profile = JoyConProfile(side: side)
+            coordinator.devices[id] = DeviceRecord(
+                id: id, profile: profile,
+                advertisement: AdvertisementInfo(vendorID: 0x057E, productID: profile.hidProductID, localName: nil, rssi: nil),
+                connectionState: .ready, virtualHID: nil, outputModeID: "switchPro"
+            )
+            coordinator.devices[id]?.setConsoleProtocol(true)
+            coordinator.startPairDispatch(for: id)
+        }
+        let previousLeft = try #require(coordinator.stateContinuations[leftID])
+        let previousRight = try #require(coordinator.stateContinuations[rightID])
+        let calibrationBytes: [UInt8] = [0x00, 0x08, 0x80, 0x08, 0x07, 0x70, 0x08, 0x07, 0x70]
+        let frame = CommandResponseFrame(data: Data(repeating: 0, count: 16 + 0x28) + Data(calibrationBytes),
+                                         sourceHandle: nil)
+        let exchange = CommandExchange(request: NS2Commands.leftStickCalibrationRead, response: frame)
+
+        await coordinator.handle(.commonModeRestored(leftID, responses: [exchange]), kind: .ble)
+
+        let left = try #require(coordinator.devices[leftID])
+        #expect(left.connectionState == .ready)
+        #expect(!left.usesConsoleProtocol)
+        #expect(left.calibration.left == StickCalibration(neutralX: 2048, neutralY: 2048,
+                                                          maxX: 1800, maxY: 1792, minX: 1800, minY: 1792))
+        #expect(coordinator.devices[rightID]?.usesConsoleProtocol == true)
+        let newLeft = try #require(coordinator.stateContinuations[leftID])
+        let report = RawReport(reportID: nil, data: Data())
+        if case .terminated = previousRight.yield(report) {
+            Issue.record("The other half's dispatch was stopped")
+        }
+        if case .terminated = newLeft.yield(report) {
+            Issue.record("The new common-mode dispatch did not start")
+        }
+        guard case .terminated = previousLeft.yield(report) else {
+            Issue.record("The console-mode dispatch remained active")
+            return
+        }
+    }
+
     @Test func repliesMatchCommandSubcommandAndSPIAddress() {
         let response = Data([2, 1, 1, 4, 0x10, 0x78, 0, 0, 0x40, 0, 0, 0, 0, 0x30, 1, 0])
         let request = NS2Console.spiRead(0x13000, length: 0x40)

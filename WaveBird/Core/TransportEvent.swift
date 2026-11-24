@@ -20,11 +20,17 @@ struct CommandResponseFrame: Sendable {
     let sourceHandle: UInt16?
 }
 
+struct CommandExchange: Sendable {
+    let request: Data
+    let response: CommandResponseFrame?
+}
+
 enum TransportEvent: Sendable {
     case discovered(DeviceID, AdvertisementInfo)
     case connecting(DeviceID)
     case connected(DeviceID)
-    case consoleMode(DeviceID, enabled: Bool)
+    case consoleMode(DeviceID)
+    case commonModeRestored(DeviceID, responses: [CommandExchange])
     case ready(DeviceID)
     case disconnected(DeviceID, DisconnectReason)
     case reportReceived(DeviceID, reportID: UInt8?, Data)

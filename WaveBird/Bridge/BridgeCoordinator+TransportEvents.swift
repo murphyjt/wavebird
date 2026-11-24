@@ -5,9 +5,9 @@ extension BridgeCoordinator {
     // buildReport, and vhid.dispatch all happen on the cooperative pool so
     // input processing doesn't share a thread with the UI. We snapshot the
     // stable per-connection values (vhid/session/profile/calibration) into
-    // locals here on the main actor — calibration is finalized by .ready (init
-    // flash reads complete before .ready), so the snapshot is safe — and the
-    // task captures only those Sendable locals, never self. republishVirtualHID
+    // locals here on the main actor. Init flash reads complete before .ready,
+    // and restoring common mode restarts dispatch with the updated calibration.
+    // The task captures only those Sendable locals, never self. republishVirtualHID
     // must re-call this after swapping the VHID, since the task holds the old
     // vhid/session by value rather than re-reading devices[id] each iteration.
     func startDispatch(for id: DeviceID) {
@@ -153,11 +153,24 @@ extension BridgeCoordinator {
             devices[id]?.setConsoleProtocol(false)
             devices[id]?.connectionState = .connected
 
-        case .consoleMode(let id, let enabled):
-            devices[id]?.setConsoleProtocol(enabled)
-            if enabled {
-                armConnectingTimeout(id, kind: kind, timeout: .seconds(25))
+        case .consoleMode(let id):
+            devices[id]?.setConsoleProtocol(true)
+            armConnectingTimeout(id, kind: kind, timeout: .seconds(25))
+
+        case .commonModeRestored(let id, let responses):
+            devices[id]?.setConsoleProtocol(false)
+            for exchange in responses {
+                handleCommandResponse(id, request: exchange.request, response: exchange.response)
             }
+            guard let record = devices[id], record.connectionState == .ready else { return }
+            refreshKnownController(for: record)
+            guard dispatchTasks[id] != nil else { return }
+            if joyConPair?.includes(id) == true {
+                startPairDispatch(for: id)
+            } else {
+                startDispatch(for: id)
+            }
+            maybePromptForPairing(record: record)
 
         case .ready(let id):
             devices[id]?.connectionState = .ready
@@ -216,26 +229,7 @@ extension BridgeCoordinator {
                 // maybePromptForPairing deferred to activateWithProfile.
             }
         case .commandResponse(let id, let request, let response):
-            FileHandle.standardError.write(Data("[ble] cmd:           \(hex(request))\n".utf8))
-            if let response {
-                let label = response.sourceHandle.map { String(format: "resp 0x%04X", $0) } ?? "resp       "
-                FileHandle.standardError.write(Data("[ble] \(label): \(hex(response.data))\n".utf8))
-                // Flash-read responses (cmd 0x02) get a per-address hexdump so
-                // unknown flash regions stay readable when adding Pro/JoyCon support.
-                if request.first == 0x02, let address = NS2Responses.flashReadAddress(of: request) {
-                    FileHandle.standardError.write(Data("[ble] flash data:\n".utf8))
-                    for line in hexdumpLines(response.data.dropFirst(16), baseOffset: address) {
-                        FileHandle.standardError.write(Data("[ble]   \(line)\n".utf8))
-                    }
-                }
-                if devices[id]?.usesConsoleProtocol != true || request.first == 0x10,
-                   let profile = devices[id]?.profile,
-                   let meta = profile.handleCommandResponse(request: request, response: response.data) {
-                    mergeMetadata(meta, into: id)
-                }
-            } else {
-                FileHandle.standardError.write(Data("[ble] resp:          (none)\n".utf8))
-            }
+            handleCommandResponse(id, request: request, response: response)
 
         case .unmatchedResponse(_, let data, let sourceHandle):
             let label = sourceHandle.map { String(format: "0x%04X", $0) } ?? "?"
@@ -311,6 +305,29 @@ extension BridgeCoordinator {
 
         case .availability(let reason):
             transportUnavailableReason = reason
+        }
+    }
+
+    private func handleCommandResponse(_ id: DeviceID, request: Data, response: CommandResponseFrame?) {
+        FileHandle.standardError.write(Data("[ble] cmd:           \(hex(request))\n".utf8))
+        guard let response else {
+            FileHandle.standardError.write(Data("[ble] resp:          (none)\n".utf8))
+            return
+        }
+        let label = response.sourceHandle.map { String(format: "resp 0x%04X", $0) } ?? "resp       "
+        FileHandle.standardError.write(Data("[ble] \(label): \(hex(response.data))\n".utf8))
+        // Flash-read responses (cmd 0x02) get a per-address hexdump so
+        // unknown flash regions stay readable when adding Pro/JoyCon support.
+        if request.first == 0x02, let address = NS2Responses.flashReadAddress(of: request) {
+            FileHandle.standardError.write(Data("[ble] flash data:\n".utf8))
+            for line in hexdumpLines(response.data.dropFirst(16), baseOffset: address) {
+                FileHandle.standardError.write(Data("[ble]   \(line)\n".utf8))
+            }
+        }
+        if devices[id]?.usesConsoleProtocol != true || request.first == 0x10,
+           let profile = devices[id]?.profile,
+           let meta = profile.handleCommandResponse(request: request, response: response.data) {
+            mergeMetadata(meta, into: id)
         }
     }
 
