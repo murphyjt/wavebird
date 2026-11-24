@@ -45,12 +45,18 @@ actor BLETransport: Transport {
     private var vibrationChars: [UUID: CBCharacteristic] = [:]
     // Per device, a map of subscribed response-char UUID → its handle.
     private var responseHandles: [UUID: [CBUUID: UInt16]] = [:]
-    private var pendingResponses: [UUID: (request: Data, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
+    // `token` identifies the request, so a timeout only expires the request
+    // that armed it — not a later one that reused the device's slot.
+    private var pendingResponses: [UUID: (request: Data, token: UInt64, cont: CheckedContinuation<CommandResponseFrame?, Never>)] = [:]
+    private var nextRequestToken: UInt64 = 0
     // Single-slot coalescing queue for vibration writes that hit backpressure.
     // CoreBluetooth silently drops writeWithoutResponse calls when the per-peripheral
     // queue is full, so we stash the latest pending payload here and drain it from
     // peripheralIsReady. Rumble is naturally coalescable — the freshest frame wins.
     private var pendingVibration: [UUID: Data] = [:]
+    // Bumped on every connect and disconnect, so an init handshake can tell
+    // whether the link it started on is still the current one.
+    private var connectionGeneration: [UUID: UInt64] = [:]
 
     init() {
         // bufferingNewest caps memory if the main-actor consumer falls behind.
@@ -90,8 +96,15 @@ actor BLETransport: Transport {
         guard !services.isEmpty else { return }
         let connected = central.retrieveConnectedPeripherals(withServices: services)
         for p in connected {
+            // Every NS2 controller exposes the same service UUID, so a
+            // connected peripheral doesn't say which product it is (that only
+            // comes from the advertisement). Reuse the matcher from an earlier
+            // discovery; with several matchers and no history, don't guess —
+            // tagging a Joy-Con or Pro with the first (GameCube) matcher gave
+            // it the wrong product ID and characteristic UUIDs, which broke
+            // pairing, rumble and the Joy-Con pair path.
+            guard let m = matcherByDevice[p.identifier] ?? (matchers.count == 1 ? matchers.first : nil) else { continue }
             peripherals[p.identifier] = p
-            guard let m = matchers.first else { continue }
             matcherByDevice[p.identifier] = m
             let id = DeviceID(transport: .ble, raw: p.identifier)
             let info = AdvertisementInfo(vendorID: 0x057E, productID: m.productID, localName: p.name, rssi: 0)
@@ -189,20 +202,25 @@ actor BLETransport: Transport {
         }
         precondition(pendingResponses[id.raw] == nil, "overlapping sendAwaitingResponse for \(id.raw)")
         let type = writeType(for: ch)
+        nextRequestToken &+= 1
+        let token = nextRequestToken
         return await withCheckedContinuation { (cont: CheckedContinuation<CommandResponseFrame?, Never>) in
-            pendingResponses[id.raw] = (request: payload, cont: cont)
+            pendingResponses[id.raw] = (request: payload, token: token, cont: cont)
             p.writeValue(payload, for: ch, type: type)
             Task { [weak self] in
                 try? await Task.sleep(for: timeout)
-                await self?.expirePending(id: id.raw)
+                await self?.expirePending(id: id.raw, token: token)
             }
         }
     }
 
-    private func expirePending(id: UUID) {
-        if let pending = pendingResponses.removeValue(forKey: id) {
-            pending.cont.resume(returning: nil)
-        }
+    // Keyed by request, not device: command N's timer used to fire while
+    // command N+1 was pending (N answered early), cutting N+1 short — flash
+    // reads for serial/calibration and LTK pairing steps then failed at random.
+    private func expirePending(id: UUID, token: UInt64) {
+        guard pendingResponses[id]?.token == token,
+              let pending = pendingResponses.removeValue(forKey: id) else { return }
+        pending.cont.resume(returning: nil)
     }
 
     // Response framing echoes the request's cmd ID (byte 0) and subcmd (byte 3).
@@ -266,6 +284,7 @@ actor BLETransport: Transport {
     }
 
     fileprivate func handleConnect(peripheral: CBPeripheral) {
+        connectionGeneration[peripheral.identifier, default: 0] &+= 1
         peripheral.delegate = delegate
         if let m = matcherByDevice[peripheral.identifier] {
             peripheral.discoverServices([m.serviceUUID])
@@ -279,6 +298,7 @@ actor BLETransport: Transport {
     fileprivate func handleDisconnect(peripheral: CBPeripheral, error: Error?) {
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         let reason: DisconnectReason = error.map { .error($0.localizedDescription) } ?? .userInitiated
+        connectionGeneration[peripheral.identifier, default: 0] &+= 1
         // Keep peripherals[]/matcherByDevice[] so connect() can be retried without a fresh advertisement.
         inputChars[peripheral.identifier] = nil
         secondaryInputs[peripheral.identifier] = nil
@@ -292,6 +312,20 @@ actor BLETransport: Transport {
             pending.cont.resume(returning: nil)
         }
         continuation.yield(.disconnected(id, reason))
+        restartScanSession()
+    }
+
+    // With duplicate filtering on, CoreBluetooth reports each peripheral once
+    // per scan session. A controller discovered earlier in this session is
+    // therefore never re-reported when it re-advertises after a drop (idle
+    // sweep, controller-side disconnect, connect timeout), so press-to-reconnect
+    // silently does nothing. Restarting the scan opens a fresh session; the
+    // controller's next advertisement fires .discovered and the coordinator
+    // reconnects it. No-op while discovery is off (e.g. sleep teardown).
+    private func restartScanSession() {
+        guard wantsScan, central.state == .poweredOn else { return }
+        central.stopScan()
+        startScanIfReady()
     }
 
     fileprivate func handleServicesDiscovered(peripheral: CBPeripheral) {
@@ -332,14 +366,26 @@ actor BLETransport: Transport {
             vibrationChars[peripheral.identifier] = vibCh
         }
 
+        // The init handshake suspends across many awaits. If the link drops
+        // meanwhile (or drops and comes back), the generation moves on and
+        // this pass no longer owns the connection. Without the check the loop
+        // kept going — every command failing silently — and yielded .ready
+        // for a dead link after .disconnected had already been sent.
+        let generation = connectionGeneration[peripheral.identifier]
+        func linkStillOurs() -> Bool {
+            connectionGeneration[peripheral.identifier] == generation && peripheral.state == .connected
+        }
+
         // Give the CCCD writes a moment to land before issuing commands.
         try? await Task.sleep(for: .milliseconds(20))
 
         let id = DeviceID(transport: .ble, raw: peripheral.identifier)
         for cmd in m.initCommands {
+            guard linkStillOurs() else { return }
             let resp = (try? await sendAwaitingResponse(cmd, to: id, timeout: .milliseconds(500))) ?? nil
             continuation.yield(.commandResponse(id, request: cmd, response: resp))
         }
+        guard linkStillOurs() else { return }
 
         // Init complete — open the input-report firehose.
         peripheral.setNotifyValue(true, for: inputCh)

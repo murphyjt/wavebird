@@ -15,6 +15,14 @@ extension BridgeCoordinator {
             await promoteSoloJoyCon(id: id)
             return
         }
+        // JoyConPair models a single pair. With one already live, the partner
+        // search below would pick one of its members and formJoyConPair would
+        // overwrite it, leaving the other member with no VHID. A further
+        // Joy-Con plays solo instead, as pairJoyCons does with leftovers.
+        if let pair = joyConPair, !pair.includes(id) {
+            await promoteSoloJoyCon(id: id)
+            return
+        }
         let pid = record.advertisement.productID
         let amLeft = JoyConPairProfile.isLeft(productID: pid)
 

@@ -13,6 +13,9 @@ final class MappingProfileStore {
     private let catalog: HIDOutputCatalog
     private let defaults: UserDefaults
     private(set) var customProfiles: [MappingProfile] = []
+    // Persisted blobs that failed to decode, kept verbatim and written back
+    // on every persist (see persist()).
+    @ObservationIgnored private var undecodable: [String: Data] = [:]
 
     init(catalog: HIDOutputCatalog = .default, defaults: UserDefaults = .standard) {
         self.catalog = catalog
@@ -88,13 +91,23 @@ final class MappingProfileStore {
 
     private func load() {
         guard let dict = defaults.dictionary(forKey: Self.defaultsKey) as? [String: Data] else { return }
-        customProfiles = dict.values
-            .compactMap { try? JSONDecoder().decode(MappingProfile.self, from: $0) }
+        var decoded: [MappingProfile] = []
+        for (key, blob) in dict {
+            if let profile = try? JSONDecoder().decode(MappingProfile.self, from: blob) {
+                decoded.append(profile)
+            } else {
+                undecodable[key] = blob
+            }
+        }
+        customProfiles = decoded
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private func persist() {
-        var dict: [String: Data] = [:]
+        // Start from the blobs this build couldn't read (e.g. written by a
+        // newer version with a field value we don't know) so the first save
+        // after a downgrade doesn't erase them; they reappear on upgrade.
+        var dict = undecodable
         for profile in customProfiles {
             dict[profile.id] = try? JSONEncoder().encode(profile)
         }
