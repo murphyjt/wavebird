@@ -135,22 +135,21 @@ jobs:
 
       - name: Stage app
         run: |
-          mkdir -p dist
-          cp -R build/Build/Products/Release/WaveBird.app dist/
+          mkdir -p dist dmg-root
+          ditto build/Build/Products/Release/WaveBird.app dmg-root/WaveBird.app
+          ln -s /Applications dmg-root/Applications
 
-      - name: Install create-dmg
-        run: brew install create-dmg
-
+      # `diskutil image` ships with macOS (Apple's replacement for the hdiutil
+      # verbs deprecated in macOS 27), so no third-party code runs in this job;
+      # create-dmg came unpinned from Homebrew. The volume is APFS (readable on
+      # 10.13+) and the Finder window uses default icon placement.
       - name: Build DMG
         run: |
-          create-dmg \
-            --volname "WaveBird ${{ steps.version.outputs.version }}" \
-            --window-size 540 360 \
-            --icon-size 100 \
-            --icon "WaveBird.app" 140 180 \
-            --app-drop-link 400 180 \
-            "dist/WaveBird-${{ steps.version.outputs.version }}.dmg" \
-            "dist/WaveBird.app"
+          diskutil image create from \
+            --format UDZO \
+            --volumeName "WaveBird ${{ steps.version.outputs.version }}" \
+            dmg-root \
+            "dist/WaveBird-${{ steps.version.outputs.version }}.dmg"
 
       - name: Sign DMG
         run: |
