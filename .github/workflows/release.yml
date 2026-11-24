@@ -260,10 +260,23 @@ jobs:
           cat release-body.md
           echo "::endgroup::"
 
-      - name: Create GitHub Release
+      # gh is GitHub's own CLI, preinstalled on the runners. --verify-tag fails
+      # instead of creating a missing tag; the title matches the old action's
+      # default (the tag name). Re-running for a tag that already has a release
+      # replaces its DMG and notes, as action-gh-release did.
+      - name: Create or update GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          files: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
-          body_path: release-body.md
-          fail_on_unmatched_files: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          DMG: dist/WaveBird-${{ steps.version.outputs.version }}.dmg
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG" --clobber
+            gh release edit "$TAG" --title "$TAG" --notes-file release-body.md
+          else
+            gh release create "$TAG" "$DMG" \
+              --verify-tag \
+              --title "$TAG" \
+              --notes-file release-body.md
+          fi
