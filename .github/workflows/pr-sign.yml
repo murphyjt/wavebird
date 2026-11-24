@@ -237,12 +237,14 @@ jobs:
         with:
           subject-path: dist/WaveBird-${{ steps.resolve.outputs.label }}.zip
 
+      # archive: false uploads the zip itself rather than wrapping it in a
+      # second one; the artifact is named after the file.
       - name: Upload signed app
         id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: WaveBird-${{ steps.resolve.outputs.label }}
           path: dist/WaveBird-${{ steps.resolve.outputs.label }}.zip
+          archive: false
           retention-days: 30
           if-no-files-found: error
 
